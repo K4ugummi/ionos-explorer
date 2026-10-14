@@ -81,7 +81,7 @@ Static single-page app. Local-first: open it and drop a snapshot in. A static
 build can later sit behind nginx + oauth2-proxy (SSO) for a team, with no
 code changes.
 
-Planned modules:
+Modules:
 
 - `src/snapshot`: unzip (fflate), decrypt (`age-encryption`, the TS port
   of age), verify checksums against the manifest.
@@ -93,7 +93,7 @@ Planned modules:
 - `src/search`: in-memory full-text index (names, IDs, IPs, MACs, labels)
   with filters such as `type:cube dc:fra-prod-core ip:10.7.*`. Every hit shows
   its path: contract › datacenter › LAN › server.
-- `src/canvas`: React Flow (xyflow) + ELK.js for hierarchical layout.
+- `src/canvas` *(next)*: React Flow (xyflow) + ELK.js for hierarchical layout.
   Semantic zoom:
   1. **Contract**: datacenters as boxes grouped by location. Cross Connects
      with two peers draw as an edge; with three or more peers as a small hub
@@ -101,7 +101,7 @@ Planned modules:
   2. **Datacenter**: LANs as network bars; servers, LBs, NAT gateways,
      node pools and DBaaS clusters attached.
   3. **Resource**: detail panel with properties and raw JSON.
-- `src/panels`: detail, raw JSON, coverage/visibility report.
+- `src/ui`: open screen, search panel, detail panel (properties, connections, contents, raw JSON), contract overview with the visibility report. Selection and query live in the URL hash.
 
 ### Connectivity the API cannot see
 
@@ -159,7 +159,7 @@ with very large graphs.
 
 1. ✅ Repo scaffold, snapshot format v1, manifest schema, fixture generator
 2. Exporter MVP: Cloud API compute, network and Cross Connects; coverage; age
-3. Explorer MVP: load snapshot, global search, detail panel
+3. ✅ Explorer MVP: load snapshot (incl. age), global search, detail panel
 4. Canvas: contract overview with Cross Connects, datacenter drill-down
 5. Appliance detection, VPN Gateway coverage, manual links
 6. Wider coverage (DBaaS, Kubernetes, IAM, DNS, …), snapshot diff,

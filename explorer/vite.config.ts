@@ -27,4 +27,6 @@ function contentSecurityPolicy(): Plugin {
 
 export default defineConfig({
   plugins: [react(), contentSecurityPolicy()],
+  // The demo snapshot is imported from ../fixtures.
+  server: { fs: { allow: ['..'] } },
 })

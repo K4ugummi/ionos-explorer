@@ -24,7 +24,7 @@ go1.27.2, automatically; the module needs Go ≥ 1.26), Node ≥ 20.19.
 ```sh
 make fixture        # writes fixtures/demo-contract.ionx
 make test           # Go vet/tests, explorer lint/build
-make explorer-dev   # http://localhost:5173
+make explorer-dev   # http://localhost:5173, then "Load demo snapshot"
 ```
 
 Encrypted fixture (for testing the age path):
