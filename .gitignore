@@ -1,0 +1,11 @@
+# Snapshots contain real infrastructure data. Never commit them.
+*.ionx
+*.age
+!fixtures/demo-contract.ionx
+
+# Credentials
+*.token
+.env
+.env.*
+
+/bin/

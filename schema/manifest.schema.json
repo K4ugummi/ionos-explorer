@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ionos-explorer.local/schema/manifest.schema.json",
+  "title": "IONOS Explorer snapshot manifest",
+  "description": "manifest.json at the root of an .ionx container. See docs/SNAPSHOT_FORMAT.md.",
+  "type": "object",
+  "required": ["formatVersion", "createdAt", "generator", "synthetic", "apis", "coverage", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "formatVersion": { "const": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "enum": ["ionos-export", "ionos-fixture"] },
+        "version": { "type": "string" }
+      }
+    },
+    "synthetic": {
+      "type": "boolean",
+      "description": "true for generated demo data, false for real exports"
+    },
+    "contract": {
+      "type": "object",
+      "required": ["number"],
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": "integer" },
+        "owner": { "type": "string" }
+      }
+    },
+    "apis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "version", "baseUrl"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "baseUrl": { "type": "string", "format": "uri" },
+          "region": { "type": "string" }
+        }
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["api", "endpoint", "path", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "api": { "type": "string" },
+          "endpoint": { "type": "string", "description": "path template, e.g. /datacenters/{datacenterId}/servers" },
+          "path": { "type": "string", "description": "concrete request path" },
+          "query": { "type": "string" },
+          "status": { "enum": ["ok", "forbidden", "not_found", "error", "skipped"] },
+          "httpStatus": { "type": "integer" },
+          "file": { "type": "string", "pattern": "^raw/.+\\.json$" },
+          "items": { "type": "integer", "minimum": 0 },
+          "pages": { "type": "integer", "minimum": 0 },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "size", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "pattern": "^raw/.+\\.json$" },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}
