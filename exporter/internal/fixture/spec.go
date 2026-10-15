@@ -148,6 +148,8 @@ var dcSpecs = []dcSpec{
 			{Name: "fra-core-web-%02d", Count: 4, Type: "CUBE", Template: "CUBES M", LANs: []string{"app"}, Role: "web"},
 			{Name: "fra-core-api-%02d", Count: 3, Type: "VCPU", Cores: 4, RAM: 8192, LANs: []string{"app", "db"}, Role: "api", DataGB: 50},
 			{Name: "fra-core-db-%02d", Count: 2, Type: "ENTERPRISE", Cores: 8, RAM: 32768, LANs: []string{"db"}, Role: "database", DataGB: 500},
+			// A plain-named VM in four private LANs: only its placement gives it away.
+			{Name: "fra-core-hub-%02d", Count: 1, Type: "VCPU", Cores: 2, RAM: 4096, LANs: []string{"transit", "app", "db", "mgmt"}, Role: "hub"},
 		},
 		NAT: &natSpec{"fra-core-natgw", []string{"app", "db"}},
 		NLB: &lbSpec{Name: "fra-core-nlb", Listener: "inet", Target: "app", Port: 443, TargetRole: "web"},

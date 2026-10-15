@@ -38,7 +38,9 @@ describe('search on the demo fixture', async () => {
   it('finds resources by IP, MAC and globs', () => {
     const vip = m.nodes.get([...m.nodes.values()].find((n) => n.kind === 'lan' && n.ips.length)!.id)!.ips[0]
     // A failover IP lives on the LAN, every member's NIC, and its IP block.
-    expect(new Set(search(m, vip).hits.map((h) => h.node.kind))).toEqual(new Set(['lan', 'server', 'nic', 'ipblock']))
+    const exact = search(m, vip).hits.filter((h) => h.node.ips.includes(vip))
+    expect(new Set(exact.map((h) => h.node.kind))).toEqual(new Set(['lan', 'server', 'nic', 'ipblock']))
+    expect(exact[0].score).toBeGreaterThanOrEqual(90) // exact matches rank before prefix matches
     const nic = [...m.nodes.values()].find((n) => n.kind === 'nic')!
     expect(names(nic.macs[0])).toContain(nic.name)
     expect(search(m, 'ip:203.0.113.*').hits.length).toBeGreaterThan(5)

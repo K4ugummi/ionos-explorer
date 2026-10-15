@@ -12,7 +12,7 @@ describe('buildModel on the demo fixture', async () => {
   it('builds the contract tree', () => {
     expect(m.nodes.get(m.rootId)?.name).toBe('Contract 31812345')
     expect(byKind(m, 'datacenter')).toHaveLength(14)
-    expect(byKind(m, 'server')).toHaveLength(68)
+    expect(byKind(m, 'server')).toHaveLength(69)
     expect(m.warnings).toEqual([])
     for (const n of m.nodes.values()) {
       if (n.id !== m.rootId) expect(m.nodes.has(n.parentId!), `${n.kind} ${n.name}`).toBe(true)

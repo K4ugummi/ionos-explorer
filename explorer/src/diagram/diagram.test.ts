@@ -23,7 +23,7 @@ describe('contract diagram', async () => {
     const locations = d.nodes.filter((n) => n.id.startsWith('loc:')).map((n) => n.data.title)
     expect(locations).toEqual(['de/fra', 'de/fra/2', 'de/txl', 'es/vit', 'gb/lhr'])
     expect(node(d, named(m, 'fra-prod-core').id).parent).toBe('loc:de/fra')
-    expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('12 servers')
+    expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('13 servers')
   })
 
   it('draws two-peer Cross Connects as lines and others as hubs', () => {
@@ -220,7 +220,7 @@ describe('VPN tunnels, appliances and manual links', async () => {
     expect(line('manual')).toEqual([[pair(named(m, 'fra-prod-core').id, txl), 'IPsec in the VMs']])
     const outside = d.nodes.filter((n) => n.parent === 'group:external').map((n) => n.data.title)
     expect(outside).toEqual(['192.0.2.77', 'Head office'])
-    expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('3 appliances')
+    expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('4 appliances')
     expect(d.anchors.get(named(m, 'txl-core').id)).toBe(d.edges.find((e) => e.label === 'txl-core')!.id)
   })
 

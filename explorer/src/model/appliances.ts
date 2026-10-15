@@ -55,6 +55,12 @@ export const NAME_HINTS = new Set([
   'nva',
 ])
 
+/** Vendors named in a datacenter's name or description (the products also count). */
+const VENDORS = /\b(cisco|fortinet|forti\w*|palo ?alto|check ?point|juniper|sophos|mikrotik|f5|netgate|barracuda)\b/i
+
+/** A server in this many LANs routes between them, whatever its name. */
+export const MANY_LANS = 4
+
 const IKE_PORTS = [500, 4500]
 
 export function detectAppliances(model: Model) {
@@ -67,7 +73,7 @@ export function detectAppliances(model: Model) {
   }
 }
 
-function detect(model: Model, server: GraphNode): Appliance | undefined {
+export function detect(model: Model, server: GraphNode): Appliance | undefined {
   const edges = model.edgesByNode.get(server.id) ?? []
   const node = (id: string) => model.nodes.get(id)
   const reasons: string[] = []
@@ -126,8 +132,10 @@ function detect(model: Model, server: GraphNode): Appliance | undefined {
   const priv = lans.filter((l) => l.subtype !== 'public').map((l) => l.name)
   const routing = (pub.length > 0 && priv.length > 0) || lans.length >= 3
   const lanList = (names: string[], kind: string) => `${kind} ${names.length === 1 ? 'LAN' : 'LANs'} ${names.join(', ')}`
+  const many = lans.length >= MANY_LANS
   if (pub.length && priv.length) reasons.push(`NICs in the ${lanList(pub, 'public')} and the ${lanList(priv, 'private')}.`)
   else if (routing) reasons.push(`NICs in ${lans.length} LANs (${lans.map((l) => l.name).join(', ')}).`)
+  if (many) reasons.push(`${lans.length} LANs are more than an ordinary server needs.`)
 
   // 5. It shares a failover IP, typical for HA firewall pairs.
   const failover = lans.flatMap((l) => l.ips.filter((ip) => server.ips.includes(ip)).map((ip) => `${ip} in ${l.name}`))
@@ -138,11 +146,25 @@ function detect(model: Model, server: GraphNode): Appliance | undefined {
   const hints = [...new Set(words.filter((w) => NAME_HINTS.has(w)))]
   if (hints.length) reasons.push(`Name or labels contain ${hints.map((h) => `“${h}”`).join(', ')}.`)
 
+  // 7. Its datacenter says what runs there ("Cisco Firepower core"). Only
+  // for servers in many LANs: names like "edge" are too common otherwise.
+  const dc = server.dcId ? node(server.dcId) : undefined
+  let dcHint: string | undefined
+  if (dc && many) {
+    const text = [dc.name, dc.facts.find((f) => f.label === 'Description')?.value ?? ''].join(' ')
+    const words = [...new Set(text.toLowerCase().split(/[^a-z0-9]+/))].filter((w) => NAME_HINTS.has(w))
+    dcHint = IMAGE_RULES.find((r) => r.pattern.test(text))?.product ?? text.match(VENDORS)?.[0] ?? words.map((w) => `“${w}”`).join(', ')
+    if (dcHint) reasons.push(`Its datacenter ${dc.name} mentions ${dcHint}.`)
+  }
+
   if (product) return { title: product, confidence: 'high', reasons }
   if (tunnels.length) return { title: 'VPN endpoint', confidence: 'high', reasons }
   if (ipsec.size && routing) return { title: 'Likely firewall or VPN gateway', confidence: 'medium', reasons }
   const weak = [ipsec.size > 0, failover.length > 0, hints.length > 0].filter(Boolean).length
-  if (routing && weak >= 1 && (hints.length > 0 || weak >= 2)) return { title: 'Possible router or firewall', confidence: 'low', reasons }
+  if (many && (weak >= 1 || dcHint)) return { title: 'Likely router or firewall', confidence: 'medium', reasons }
+  if (many || (routing && weak >= 1 && (hints.length > 0 || weak >= 2))) {
+    return { title: 'Possible router or firewall', confidence: 'low', reasons }
+  }
   return undefined
 }
 

@@ -4,9 +4,9 @@
   "ips": [
     {
       "ips": [
-        "10.166.178.254"
+        "10.48.199.254"
       ],
-      "nic": "82b699bd-04a6-49f1-8b32-3679e30400d7",
+      "nic": "e642ea8c-652d-426a-b91a-9638a0244f1a",
       "note": "Re-addressed in the VM during the DR test; DCD not updated"
     }
   ],
@@ -16,10 +16,10 @@
       "id": "demo-link-1",
       "label": "IPsec (in the VMs)",
       "note": "Configured on the Catalyst 8000V pair, not visible in the API",
-      "to": "681ee30a-4f85-4010-bc95-c00d5f6f0c6b"
+      "to": "3d484910-3fdc-4141-a8ea-4ad6c30b5624"
     },
     {
-      "from": "8c815f90-2e80-45fc-a19e-ccb51b656d37",
+      "from": "a8772a9a-b1c0-408f-bcc2-012cabe8e2f0",
       "id": "demo-link-2",
       "label": "IPsec backup",
       "to": "site:demo-head-office"

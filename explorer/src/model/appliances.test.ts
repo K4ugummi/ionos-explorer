@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { search } from '../search/search'
 import { fixtureModel } from '../test/fixture'
-import { IMAGE_RULES } from './appliances'
+import { detect, IMAGE_RULES } from './appliances'
 import type { Model } from './types'
 
 const named = (m: Model, name: string) => [...m.nodes.values()].find((n) => n.name === name)!
@@ -31,6 +31,23 @@ describe('network appliances', async () => {
     expect(reasons).not.toMatch(/Firewall rules allow/)
   })
 
+  it('flags servers in many LANs, more firmly when their datacenter names a product', () => {
+    const hub = named(m, 'fra-core-hub-01')
+    // fra-prod-core's description mentions "edge" firewalls.
+    expect([hub.appliance?.title, hub.appliance?.confidence]).toEqual(['Likely router or firewall', 'medium'])
+    expect(hub.appliance!.reasons.join(' ')).toMatch(/4 LANs are more than an ordinary server needs.*fra-prod-core mentions “edge”/)
+
+    const dc = m.nodes.get(hub.dcId!)!
+    const withDc = (description: string) => {
+      const nodes = new Map(m.nodes).set(dc.id, { ...dc, name: 'dc-a', facts: [{ label: 'Description', value: description }] })
+      return detect({ ...m, nodes }, hub)
+    }
+    expect(withDc('shared services')).toMatchObject({ title: 'Possible router or firewall', confidence: 'low' })
+    const cisco = withDc('Firepower firewalls for the core')!
+    expect(cisco.confidence).toBe('medium')
+    expect(cisco.reasons.at(-1)).toBe('Its datacenter dc-a mentions Cisco Secure Firewall (FTDv).')
+  })
+
   it('leaves ordinary servers alone', () => {
     for (const name of ['bastion-01', 'lhr-proxy-01', 'fra-core-web-01', 'data-etl-01', 'erp-app-01']) {
       expect(named(m, name).appliance, name).toBeUndefined()
@@ -40,7 +57,7 @@ describe('network appliances', async () => {
   it('is searchable', () => {
     const hits = search(m, 'is:appliance').hits.map((h) => h.node.name)
     expect(hits).toContain('fra-core-vpn-01')
-    expect(hits).toHaveLength(9)
+    expect(hits).toHaveLength(10)
     expect(search(m, 'cisco').hits.map((h) => h.node.name)).toEqual(expect.arrayContaining(['lhr-edge-gw-01', 'txl-core-vpn-01']))
   })
 
