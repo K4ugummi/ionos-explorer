@@ -15,7 +15,17 @@
 @media (max-width: 760px) {
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(240px, 45%) 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .search {
+    max-height: 45vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .react-flow__minimap {
+    display: none;
   }
 }
 
@@ -597,4 +607,500 @@ button.pill {
 .empty {
   color: var(--muted);
   padding: 12px;
+}
+
+/* ---------- view tabs ---------- */
+
+.tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tabs button {
+  border: 0;
+  background: var(--surface);
+  padding: 3px 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tabs button + button {
+  border-left: 1px solid var(--border);
+}
+
+.tabs button[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- diagram stage ---------- */
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diagram {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dg-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* React Flow styles nodes of type "group" itself; ours draw their own box. */
+.diagram .react-flow__node-group {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.diagram .react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--border);
+  --xy-minimap-background-color: var(--surface);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-button-color: var(--fg);
+}
+
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100%);
+  overflow: auto;
+  padding: 16px 18px 32px;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.08);
+  z-index: 10;
+}
+
+.drawer .detail-head h1 {
+  font-size: 19px;
+  padding-right: 36px;
+}
+
+.drawer-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+@media (max-width: 760px) {
+  .drawer {
+    top: auto;
+    height: 60%;
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+.dg-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.dg-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 14px;
+}
+
+.dg-bar .crumbs {
+  margin: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.dg-bar .crumbs strong {
+  color: var(--fg);
+}
+
+.dg-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.dg-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dg-legend-hint {
+  color: var(--faint);
+}
+
+.dg-legend-line {
+  stroke: var(--edge);
+  stroke-width: 2;
+}
+
+/* ---------- diagram nodes ---------- */
+
+.dg-handle {
+  opacity: 0;
+  pointer-events: none;
+  min-width: 0;
+  min-height: 0;
+  width: 1px;
+  height: 1px;
+  border: 0;
+}
+
+.dg-node {
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  overflow: hidden;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+
+.dg-node .dg-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dg-node .t {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dg-node .s {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.dg-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.dg-node.related {
+  border-color: var(--accent);
+}
+
+.dg-node.match {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 70%, transparent);
+}
+
+.dg-node.selected.match {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.dg-node.dim {
+  opacity: 0.3;
+}
+
+.dg-node.placeholder {
+  border-style: dashed;
+}
+
+.dg-node.inactive .t {
+  color: var(--muted);
+}
+
+.dg-off {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  margin-left: auto;
+}
+
+/* groups: locations, server groups */
+.dg-group {
+  background: var(--group-bg);
+  border: 1px solid var(--group-border);
+  border-radius: 10px;
+  padding: 0;
+  cursor: default;
+}
+
+.dg-group.dg-group-servers {
+  border-style: dashed;
+  border-radius: 8px;
+}
+
+.dg-group-label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dg-group-label .t {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.dg-group-servers .dg-group-label {
+  padding: 7px 10px;
+}
+
+.dg-group-servers .dg-group-label .t {
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.dg-group-label .t {
+  flex: none;
+}
+
+.dg-group-label .s {
+  margin: 0;
+}
+
+/* datacenter card */
+.dg-dc {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+}
+
+.dg-dc .t {
+  font-size: 14.5px;
+}
+
+.dg-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+  max-height: 22px;
+  overflow: hidden;
+}
+
+.dg-pills .pill {
+  font-size: 11px;
+  padding: 0 6px;
+}
+
+.dg-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.dg-foot .btn {
+  margin-left: auto;
+}
+
+.dg-hits {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.dg-net {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--edge-inet);
+  border: 1px solid color-mix(in srgb, var(--edge-inet) 40%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  flex: none;
+}
+
+/* LAN: a bus bar */
+.dg-lan {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-width: 1px 1px 1px 4px;
+  border-left-color: var(--k-network);
+  background: color-mix(in srgb, var(--k-network) 7%, var(--surface));
+}
+
+.dg-lan.public {
+  border-left-color: var(--edge-inet);
+  background: color-mix(in srgb, var(--edge-inet) 7%, var(--surface));
+}
+
+.dg-lan .dg-head {
+  flex: none;
+  max-width: 75%;
+}
+
+.dg-lan .s {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
+
+/* Cross Connect hub */
+.dg-hub {
+  border-radius: 999px;
+  border-color: var(--edge-cc);
+  padding: 6px 16px;
+  background: color-mix(in srgb, var(--edge-cc) 8%, var(--surface));
+}
+
+/* peer datacenter: a door to another diagram */
+.dg-peer {
+  border-style: dashed;
+}
+
+.dg-peer:hover {
+  border-color: var(--accent);
+}
+
+.dg-go {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.dg-member {
+  padding: 4px 8px;
+}
+
+.dg-member .s {
+  margin-top: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.dg-internet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  color: var(--edge-inet);
+  border-color: color-mix(in srgb, var(--edge-inet) 50%, transparent);
+  cursor: default;
+}
+
+/* ---------- diagram edges ---------- */
+
+.react-flow__edge.dg-edge .react-flow__edge-path {
+  stroke: var(--edge);
+  stroke-width: 1.4;
+}
+
+.react-flow__edge.dg-edge.cross-connect .react-flow__edge-path,
+.react-flow__edge.dg-edge.peer .react-flow__edge-path,
+.dg-legend-line.cross-connect {
+  stroke: var(--edge-cc);
+  stroke-width: 2.6;
+}
+
+.react-flow__edge.dg-edge.peer .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+
+.react-flow__edge.dg-edge.internet .react-flow__edge-path,
+.dg-legend-line.internet {
+  stroke: var(--edge-inet);
+  stroke-width: 1.8;
+}
+
+.react-flow__edge.dg-edge.target .react-flow__edge-path,
+.dg-legend-line.target {
+  stroke: var(--edge-target);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
+}
+
+.react-flow__edge.dg-edge.hl .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.react-flow__edge.dg-edge.lan.hl .react-flow__edge-path {
+  stroke: var(--accent);
+}
+
+.react-flow__edge.dg-edge.dim {
+  opacity: 0.2;
+}
+
+.dg-edge-label {
+  position: absolute;
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.dg-edge-label.cross-connect,
+.dg-edge-label.peer {
+  color: var(--edge-cc);
+  border-color: color-mix(in srgb, var(--edge-cc) 45%, transparent);
+  font-weight: 600;
+}
+
+/* minimap */
+.react-flow__minimap .mm-group {
+  fill: transparent;
+  stroke: var(--group-border);
+}
+
+.react-flow__minimap .mm-dc,
+.react-flow__minimap .mm-resource,
+.react-flow__minimap .mm-member,
+.react-flow__minimap .mm-peer {
+  fill: var(--surface-2);
+  stroke: var(--faint);
+}
+
+.react-flow__minimap .mm-lan,
+.react-flow__minimap .mm-hub {
+  fill: var(--k-network);
+}
+
+.react-flow__minimap .mm-internet {
+  fill: var(--edge-inet);
 }

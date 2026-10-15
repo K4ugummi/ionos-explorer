@@ -93,14 +93,28 @@ Modules:
 - `src/search`: in-memory full-text index (names, IDs, IPs, MACs, labels)
   with filters such as `type:cube dc:fra-prod-core ip:10.7.*`. Every hit shows
   its path: contract › datacenter › LAN › server.
-- `src/canvas` *(next)*: React Flow (xyflow) + ELK.js for hierarchical layout.
-  Semantic zoom:
-  1. **Contract**: datacenters as boxes grouped by location. Cross Connects
-     with two peers draw as an edge; with three or more peers as a small hub
-     node (a Cross Connect is one shared L2 segment, not point-to-point links).
-  2. **Datacenter**: LANs as network bars; servers, LBs, NAT gateways,
-     node pools and DBaaS clusters attached.
-  3. **Resource**: detail panel with properties and raw JSON.
+- `src/diagram`: React Flow (xyflow) for rendering, ELK.js (in a web worker)
+  for layout. A diagram is pure data derived from the model, with fixed node
+  sizes so it can be laid out before rendering. Nodes cannot be dragged; ELK
+  routes every edge orthogonally. Two levels:
+  1. **Contract**: datacenter cards grouped by location, packed to fit the
+     screen. Cross Connects with exactly two peer datacenters draw as a
+     line; with any other number as a hub node (a Cross Connect is one
+     shared L2 segment, not point-to-point links). Cross Connects without
+     visible peers get their own box. Double-click or "Open diagram" drills in.
+  2. **Datacenter**: internet on top, LANs as bars, resources between them,
+     tiered by distance from the internet (the LAN a resource reaches first
+     is drawn above it, the others below). Servers sharing a name stem and
+     the same LANs collapse into one packed group with a single link per LAN.
+     Load balancer targets show only while the balancer or a target is
+     selected. Cross Connects lead to peer datacenter nodes that open their
+     diagram. Unattached volumes and unknown resources get boxes of their own.
+
+  Every model node has an *anchor* (the box or line that shows it: a NIC or
+  volume → its server, everything in a datacenter → its card on the contract
+  view), so search hits light up and selections from search, links or the URL
+  move the diagram there. Layout of a 240-datacenter contract takes under a
+  second (see `scale.test.ts`).
 - `src/ui`: open screen, search panel, detail panel (properties, connections, contents, raw JSON), contract overview with the visibility report. Selection and query live in the URL hash.
 
 ### Connectivity the API cannot see
@@ -126,8 +140,7 @@ NICs. The explorer handles this in three layers:
    API-derived edges.
 
 Snapshot sizes are small (a few MB for hundreds of servers), so everything
-runs in the browser. Cytoscape.js is the fallback if React Flow struggles
-with very large graphs.
+runs in the browser.
 
 ## Security notes
 
@@ -144,6 +157,8 @@ with very large graphs.
 ## Open-source readiness (before publishing)
 
 - License: undecided (Apache-2.0 or MIT are the usual choices for tooling).
+  Third-party licenses to carry in a NOTICE file: elkjs is EPL-2.0 (shipped
+  unmodified as a separate worker file), the rest of the bundle is MIT/ISC/BSD.
 - Name: "IONOS" is a trademark. Prefer a neutral name with a "not affiliated
   with IONOS" note, or ask IONOS for permission.
 - Go module path: currently the local `ionos-explorer/exporter`; switch to
@@ -160,7 +175,7 @@ with very large graphs.
 1. ✅ Repo scaffold, snapshot format v1, manifest schema, fixture generator
 2. Exporter MVP: Cloud API compute, network and Cross Connects; coverage; age
 3. ✅ Explorer MVP: load snapshot (incl. age), global search, detail panel
-4. Canvas: contract overview with Cross Connects, datacenter drill-down
+4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
 5. Appliance detection, VPN Gateway coverage, manual links
 6. Wider coverage (DBaaS, Kubernetes, IAM, DNS, …), snapshot diff,
    SVG/PNG/draw.io export

@@ -29,4 +29,6 @@ export default defineConfig({
   plugins: [react(), contentSecurityPolicy()],
   // The demo snapshot is imported from ../fixtures.
   server: { fs: { allow: ['..'] } },
+  // Served locally as one app; splitting the ~190 kB (gzip) bundle buys nothing.
+  build: { chunkSizeWarningLimit: 800 },
 })

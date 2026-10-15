@@ -4,7 +4,18 @@ import { breadcrumb, related } from '../model/related'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import { KindBadge, NodeList } from './common'
 
-export function DetailPanel({ model, node, onSelect }: { model: Model; node: GraphNode; onSelect: (id?: string) => void }) {
+export function DetailPanel({
+  model,
+  node,
+  onSelect,
+  action,
+}: {
+  model: Model
+  node: GraphNode
+  onSelect: (id?: string) => void
+  /** Extra button next to "Copy ID", e.g. "Open diagram". */
+  action?: { label: string; run: () => void }
+}) {
   const crumbs = breadcrumb(model, node.id).slice(0, -1)
   const groups = useMemo(() => related(model, node.id), [model, node.id])
   const children = useMemo(() => {
@@ -60,6 +71,11 @@ export function DetailPanel({ model, node, onSelect }: { model: Model; node: Gra
         >
           {copied ? 'Copied' : 'Copy ID'}
         </button>
+        {action && (
+          <button className="btn small primary" onClick={action.run}>
+            {action.label}
+          </button>
+        )}
       </div>
 
       {labels.length > 0 && (
