@@ -53,6 +53,10 @@ export interface GraphNode {
   dhcp?: boolean
   /** NICs and their servers with an IP correction: the IPs IONOS reports. `ips` then holds the corrected ones. */
   ionosIps?: string[]
+  /** When comparing with an older snapshot: new or changed since then (see diff/diff.ts). */
+  change?: 'added' | 'changed'
+  /** Datacenters, when comparing: how many resources in them were added, removed, changed. */
+  changeCounts?: { added: number; removed: number; changed: number }
   /** Servers that look like network appliances, and why (see appliances.ts). */
   appliance?: Appliance
   raw: unknown

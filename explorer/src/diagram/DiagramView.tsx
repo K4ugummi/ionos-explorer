@@ -10,7 +10,8 @@ import {
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { CompareContext } from '../diff/context'
 import type { Model } from '../model/types'
 import { contractDiagram, datacenterDiagram } from './build'
 import { elk } from './elk'
@@ -204,6 +205,7 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
 }
 
 function Legend({ datacenter }: { datacenter: boolean }) {
+  const diff = useContext(CompareContext)
   const items: [string, string][] = datacenter
     ? [
         ['lan', 'LAN attachment'],
@@ -228,6 +230,18 @@ function Legend({ datacenter }: { datacenter: boolean }) {
           {label}
         </li>
       ))}
+      {diff && (
+        <>
+          <li>
+            <span className="dg-legend-bar added" aria-hidden />
+            New
+          </li>
+          <li>
+            <span className="dg-legend-bar changed" aria-hidden />
+            Changed since {new Date(diff.older.manifest.createdAt).toLocaleDateString()}
+          </li>
+        </>
+      )}
       {!datacenter && <li className="dg-legend-hint">Double-click a datacenter to open it</li>}
     </ul>
   )

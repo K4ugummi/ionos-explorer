@@ -191,6 +191,28 @@ drawn above the local one: a peer datacenter node or an external endpoint.
 Snapshot sizes are small (a few MB for hundreds of servers), so everything
 runs in the browser.
 
+### Comparing snapshots (`src/diff`)
+
+Two snapshots of the same contract are compared resource by resource,
+matched by ID (a rename is a change, not a removal and an addition). What
+is compared is what the explorer shows: name, state, parent, IONOS IPs,
+labels, properties (facts) and outgoing connections. Timestamps, the
+datacenter version counter and derived counts are left out, and so are
+edge labels (IP changes are reported as such). Annotations are applied
+after comparing, so links and IP corrections never show up as changes.
+
+The open snapshot is always the newer one; choosing a newer file to
+compare with swaps the two. The Changes tab lists changes by datacenter
+with before → after per field; added and changed resources are marked in
+the diagram (bar on the box, "+2 ~5 −1" on datacenter cards), in the
+details panel and in search (`is:added`, `is:changed`). Removed resources
+only exist in the Changes list.
+
+`ionos-fixture -previous` writes the demo contract as it was two weeks
+earlier (`internal/fixture/history.go`): built the same way, then a few
+edits rolled back, so every ID matches and a test checks that only those
+edits differ.
+
 ## Security notes
 
 - Snapshots contain IPs, firewall rules, names and (for admin exports) user
@@ -227,5 +249,6 @@ runs in the browser.
 3. ✅ Explorer MVP: load snapshot (incl. age), global search, detail panel
 4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
 5. ✅ Appliance detection, VPN Gateway coverage, manual links and sites
-6. Wider coverage (DBaaS, Kubernetes, IAM, DNS, …), snapshot diff,
+6. ✅ IP corrections, Security Groups, comparing snapshots
+7. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …),
    SVG/PNG/draw.io export

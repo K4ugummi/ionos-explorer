@@ -27,6 +27,7 @@ function classes(d: FlowNodeData, selected: boolean, extra = '') {
     d.node.data.inactive && 'inactive',
     d.node.data.placeholder && 'placeholder',
     d.node.data.public && 'public',
+    d.node.data.change && `chg-${d.node.data.change}`,
   ]
     .filter(Boolean)
     .join(' ')
@@ -61,6 +62,11 @@ export function DcNode({ data, selected }: NodeProps<FlowNode>) {
       </div>
       {d.subtitle && <div className="s">{d.subtitle}</div>}
       <div className="dg-pills">
+        {d.changes && (
+          <span className="pill chg" title="Added, changed, removed since the older snapshot">
+            {d.changes}
+          </span>
+        )}
         {d.pills?.map((p) => (
           <span className="pill" key={p}>
             {p}

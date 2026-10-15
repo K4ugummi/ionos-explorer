@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useContext, useMemo, useState } from 'react'
+import { CompareContext } from '../diff/context'
 import { KINDS, subtypeLabel } from '../model/kinds'
 import { breadcrumb, related } from '../model/related'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import { KindBadge, NodeList } from './common'
+import { ChangeFields } from './Changes'
 import { IpAddresses } from './IpAddresses'
 import { ManualLinks } from './ManualLinks'
 
@@ -35,6 +37,9 @@ export function DetailPanel({
   }, [model, node.id])
   const labels = Object.entries(node.labels)
   const [copied, setCopied] = useState(false)
+  const diff = useContext(CompareContext)
+  const change = diff?.byId.get(node.id)
+  const since = diff && new Date(diff.older.manifest.createdAt).toLocaleDateString()
 
   return (
     <article>
@@ -88,6 +93,18 @@ export function DetailPanel({
             </span>
           ))}
         </div>
+      )}
+
+      {change && change.type !== 'removed' && (
+        <section className={`section changed-since ${change.type}`}>
+          <h2>
+            {change.type === 'added' ? `New since ${since}` : `Changed since ${since}`}
+            <span className={`chg-pill ${change.type}`}>{change.type}</span>
+          </h2>
+          <ChangeFields fields={change.fields} />
+          {change.modified && <p className="hint">Modified {change.modified}</p>}
+          {change.type === 'added' && <p className="hint">Not in the snapshot from {since}.</p>}
+        </section>
       )}
 
       {node.appliance && (

@@ -9,6 +9,7 @@ import type { GraphNode, Model, NodeKind } from '../model/types'
  *   kind:server         resource kind (aliases: vm, dc, lan, cc, k8s, pg, vpn, …)
  *   is:appliance        servers that look like network appliances
  *   is:corrected        NICs (and their servers) with an IP correction you entered
+ *   is:added, is:changed  when comparing with an older snapshot: new or changed since
  *   dhcp:off            NICs whose IP IONOS does not assign (the VM may use another), and their servers
  *   type:cube           server type (cube, dedicated/enterprise, vcpu, gpu) or other subtype
  *   dc:fra-prod         datacenter name (substring or glob)
@@ -98,6 +99,8 @@ export function search(model: Model, query: string, limit = Infinity): SearchRes
 function matchKind(node: GraphNode, value: string) {
   if (value === 'appliance') return !!node.appliance
   if (value === 'corrected') return !!node.ionosIps
+  if (value === 'added' || value === 'new') return node.change === 'added'
+  if (value === 'changed' || value === 'modified') return node.change === 'changed'
   const kind = KIND_ALIASES[value] ?? value
   return node.kind === kind
 }

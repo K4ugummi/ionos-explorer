@@ -27,6 +27,9 @@
   --edge-target: #7a3fc2;
   --edge-vpn: #b4237a;
   --edge-manual: #c2410c;
+  --chg-added: #15803d;
+  --chg-changed: #b45309;
+  --chg-removed: #b42318;
   --group-bg: rgba(91, 101, 119, 0.05);
   --group-border: #c9cfd8;
 
@@ -66,6 +69,9 @@
     --edge-target: #b591f2;
     --edge-vpn: #f472b6;
     --edge-manual: #fb923c;
+    --chg-added: #4ade80;
+    --chg-changed: #fbbf24;
+    --chg-removed: #f87171;
     --group-bg: rgba(160, 169, 184, 0.05);
     --group-border: #343c49;
     color-scheme: dark;

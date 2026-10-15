@@ -33,6 +33,9 @@ type Options struct {
 	Seed      int64
 	CreatedAt time.Time
 	Version   string
+	// Previous generates the same contract as it was two weeks earlier (see
+	// history.go), for comparing snapshots.
+	Previous bool
 }
 
 type obj = map[string]any
@@ -55,7 +58,8 @@ func Generate(opts Options) (w *snapshot.Writer, err error) {
 }
 
 type gen struct {
-	rng *rand.Rand
+	previous bool
+	rng      *rand.Rand
 	now time.Time
 	w   *snapshot.Writer
 
@@ -147,8 +151,12 @@ type k8sCluster struct {
 }
 
 func newGen(opts Options) *gen {
+	created := opts.CreatedAt.UTC()
+	if opts.Previous {
+		created = created.Add(-HistoryAge)
+	}
 	m := snapshot.Manifest{
-		CreatedAt: opts.CreatedAt.UTC(),
+		CreatedAt: created,
 		Generator: snapshot.Generator{Name: "ionos-fixture", Version: opts.Version},
 		Synthetic: true,
 		Contract:  &snapshot.Contract{Number: contractNumber, Owner: "cloud-admins@example.com"},
@@ -157,6 +165,7 @@ func newGen(opts Options) *gen {
 		m.APIs = append(m.APIs, snapshot.API{ID: a.ID, Name: a.Name, Version: a.Version, BaseURL: a.BaseURL, Region: a.Region})
 	}
 	g := &gen{
+		previous:    opts.Previous,
 		rng:         rand.New(rand.NewSource(opts.Seed)),
 		now:         opts.CreatedAt.UTC(),
 		w:           snapshot.NewWriter(m),
@@ -207,6 +216,9 @@ func (g *gen) build() {
 	// A reserved block nobody uses: typical leftover worth spotting.
 	g.newBlock("de/fra", "ipb-de-fra-reserve", 4)
 
+	if g.previous {
+		g.rewind()
+	}
 	g.emitAll()
 }
 

@@ -1,3 +1,4 @@
+import { countsText } from '../diff/diff'
 import { KINDS, subtypeLabel } from '../model/kinds'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import type { Diagram, DiagramEdge, DiagramNode, NodeData } from './types'
@@ -58,6 +59,8 @@ function base(n: GraphNode): NodeData {
     placeholder: n.placeholder || undefined,
     tag: a ? (a.confidence === 'high' ? a.title : 'appliance?') : undefined,
     tagLevel: a?.confidence,
+    change: n.change,
+    changes: n.changeCounts ? countsText(n.changeCounts) || undefined : undefined,
   }
 }
 

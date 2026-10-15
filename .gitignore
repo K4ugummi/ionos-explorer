@@ -2,6 +2,7 @@
 *.ionx
 *.age
 !fixtures/demo-contract.ionx
+!fixtures/demo-contract-previous.ionx
 
 # Credentials
 *.token

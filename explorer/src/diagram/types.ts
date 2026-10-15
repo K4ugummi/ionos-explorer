@@ -29,6 +29,10 @@ export interface NodeData {
   /** Short marker, e.g. the product of a detected network appliance. */
   tag?: string
   tagLevel?: 'high' | 'medium' | 'low'
+  /** When comparing snapshots: new or changed since the older one. */
+  change?: 'added' | 'changed'
+  /** Datacenter cards when comparing: "+2 ~5 −1". */
+  changes?: string
 }
 
 export interface DiagramNode {

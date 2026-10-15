@@ -32,6 +32,7 @@ func run() error {
 		out            = flag.String("o", "demo-contract.ionx", "output file")
 		seed           = flag.Int64("seed", 1, "random seed (same seed = identical output)")
 		annotations    = flag.String("annotations", "", "also write the demo's manual links (explorer annotations) to this file")
+		previous       = flag.Bool("previous", false, "write the contract as it was two weeks earlier, for comparing snapshots")
 		recipientsFile = flag.String("recipients-file", "", "encrypt to the age recipients listed in this file")
 		passphraseFile = flag.String("passphrase-file", "", "encrypt with the passphrase read from this file")
 		recipients     multiFlag
@@ -45,7 +46,7 @@ func run() error {
 	}
 	opts := snapshot.Options{Recipients: rcps}
 
-	w, err := fixture.Generate(fixture.Options{Seed: *seed, Version: version})
+	w, err := fixture.Generate(fixture.Options{Seed: *seed, Version: version, Previous: *previous})
 	if err != nil {
 		return err
 	}

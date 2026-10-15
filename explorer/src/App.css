@@ -1422,3 +1422,262 @@ button.pill {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* --- comparing snapshots ------------------------------------------------------- */
+
+.dg-node.chg-added {
+  box-shadow: inset 4px 0 0 var(--chg-added);
+}
+
+.dg-node.chg-changed {
+  box-shadow: inset 4px 0 0 var(--chg-changed);
+}
+
+.pill.chg {
+  border-color: var(--chg-changed);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.chg-pill {
+  display: inline-flex;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.chg-pill.added {
+  color: var(--chg-added);
+}
+
+.chg-pill.changed {
+  color: var(--chg-changed);
+}
+
+.chg-pill.removed {
+  color: var(--chg-removed);
+}
+
+.dg-legend-bar {
+  display: inline-block;
+  width: 4px;
+  height: 12px;
+  border-radius: 1px;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+.dg-legend-bar.added {
+  background: var(--chg-added);
+}
+
+.dg-legend-bar.changed {
+  background: var(--chg-changed);
+}
+
+.tab-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.changes {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+}
+
+.changes h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.changes .lead {
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.changes-bar {
+  margin-bottom: 16px;
+}
+
+.changes-bar .spacer {
+  flex: 1;
+}
+
+.changes-bar select {
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 3px 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.chip[aria-pressed='true'] {
+  color: var(--fg);
+}
+
+.chip[aria-pressed='true'].added {
+  border-color: var(--chg-added);
+  box-shadow: inset 0 0 0 1px var(--chg-added);
+}
+
+.chip[aria-pressed='true'].changed {
+  border-color: var(--chg-changed);
+  box-shadow: inset 0 0 0 1px var(--chg-changed);
+}
+
+.chip[aria-pressed='true'].removed {
+  border-color: var(--chg-removed);
+  box-shadow: inset 0 0 0 1px var(--chg-removed);
+}
+
+.location h2 .count {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.change-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.change {
+  padding: 8px 12px;
+  border-left: 3px solid transparent;
+}
+
+.change + .change {
+  border-top: 1px solid var(--border);
+}
+
+.change.added {
+  border-left-color: var(--chg-added);
+}
+
+.change.changed {
+  border-left-color: var(--chg-changed);
+}
+
+.change.removed {
+  border-left-color: var(--chg-removed);
+}
+
+.change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+button.change-head {
+  cursor: pointer;
+}
+
+button.change-head:hover .name {
+  text-decoration: underline;
+}
+
+.change-head .name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.change.removed .name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.change-head .ctx {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.change-head .chg-pill {
+  margin-left: auto;
+}
+
+.change-summary {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 2px 0 0 0;
+  overflow-wrap: anywhere;
+}
+
+.change-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) 1fr;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.change-fields > div {
+  display: contents;
+}
+
+.change-fields dt {
+  color: var(--muted);
+}
+
+.change-fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.change-fields del {
+  color: var(--chg-removed);
+}
+
+.change-fields ins {
+  color: var(--chg-added);
+  text-decoration: none;
+}
+
+.section.changed-since > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section.changed-since > h2 .chg-pill {
+  margin-left: auto;
+}
+
+.section.changed-since > .change-fields,
+.section.changed-since > .hint {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+.compare-picker {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+  margin-bottom: 12px;
+}
