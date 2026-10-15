@@ -1,11 +1,11 @@
 import ELK from 'elkjs/lib/elk.bundled.js'
 import { describe, expect, it } from 'vitest'
-import type { Model } from '../model/types'
+import type { GraphEdge, GraphNode, Model } from '../model/types'
 import { fixtureModel } from '../test/fixture'
-import { contractDiagram, datacenterDiagram, diagramFor, stem } from './build'
+import { contractDiagram, datacenterDiagram, diagramFor, GROUP_LIMIT, GROUP_PREVIEW, preview, ROUTER_LANS, stem } from './build'
 import { toFlow } from './flow'
 import { midpoint, roundedPath } from './geometry'
-import { absolutePositions, layoutDiagram } from './layout'
+import { absolutePositions, layoutDiagram, layoutSignature } from './layout'
 import type { Diagram } from './types'
 import { addLink, addSite, applyAnnotations, EMPTY, siteNodeId } from '../annotations/annotations'
 
@@ -199,6 +199,297 @@ describe('layout', async () => {
   })
 })
 
+describe('routers: servers in many LANs', async () => {
+  const m = await fixtureModel()
+  const d = datacenterDiagram(m, named(m, 'fra-prod-core').id)
+  const lanEdges = (id: string) => edgesOf(d, id).filter((e) => e.kind === 'lan')
+  const ends = (list: typeof d.edges) => list.map((e) => `${node(d, e.source).data.title} → ${node(d, e.target).data.title}`)
+  const hub = named(m, 'fra-core-hub-01').id
+  const fw = titled(d, 'fra-core-fw')
+
+  it('draws a server in 4 or more LANs as a router box', () => {
+    expect(ROUTER_LANS).toBe(4)
+    expect(node(d, hub)).toMatchObject({
+      type: 'router',
+      width: 280,
+      height: 72,
+      data: { lans: 7, subtitle: expect.stringMatching(/^vCPU · 10\./) },
+    })
+    // The firewall pair keeps its group, which acts as one router.
+    expect(fw).toMatchObject({ type: 'group', data: { lans: 5 } })
+    expect(d.nodes.filter((n) => n.parent === fw.id).map((n) => n.type)).toEqual(['member', 'member'])
+  })
+
+  it('keeps the first LAN and LANs nothing else connects; the rest on demand', () => {
+    const always = (id: string) => ends(lanEdges(id).filter((e) => !e.onDemand))
+    const later = (id: string) => ends(lanEdges(id).filter((e) => e.onDemand))
+    // mgmt has only the two routers: the first one (the firewalls) draws it.
+    expect(always(fw.id)).toEqual(['internet → fra-core-fw', 'fra-core-fw → mgmt'])
+    expect(later(fw.id)).toEqual(['fra-core-fw → app', 'fra-core-fw → db', 'fra-core-fw → transit-fra'])
+    expect(always(hub)).toEqual(['app → fra-core-hub-01'])
+    expect(later(hub)).toEqual(['fra-core-hub-01 → db', 'fra-core-hub-01 → transit-fra', 'fra-core-hub-01 → mgmt'])
+    // Nobody else's edges are on demand, except load balancer targets.
+    expect(d.edges.filter((e) => e.onDemand && e.kind !== 'target').every((e) => e.source === fw.id || e.source === hub)).toBe(true)
+  })
+
+  it('folds the LANs only the hub uses', () => {
+    // partner-a and partner-b have nothing else on them: listed on the hub, no boxes.
+    expect(node(d, hub).data.only).toEqual({ lans: ['partner-a', 'partner-b'], key: `lans:${hub}` })
+    for (const name of ['partner-a', 'partner-b', 'data-sync']) {
+      expect(d.nodes.some((n) => n.type === 'lan' && n.data.title === name)).toBe(false)
+    }
+    expect(d.anchors.get(named(m, 'partner-a').id)).toBe(hub)
+    // data-sync leads only to a Cross Connect: the hub's line goes straight to it.
+    const sync = d.edges.find((e) => e.label === 'data-sync')!
+    expect([sync.kind, sync.source, node(d, sync.target).data.title, sync.onDemand]).toEqual([
+      'cross-connect',
+      hub,
+      'fra-data-sync',
+      undefined,
+    ])
+    const syncLan = [...m.nodes.values()].find((n) => n.name === 'data-sync' && n.dcId === named(m, 'fra-prod-core').id)!
+    expect(d.anchors.get(syncLan.id)).toBe(sync.id)
+    expect(edgesOf(d, sync.target).map((e) => node(d, e.target).data.title)).toContain('fra-prod-data')
+  })
+
+  it('marks LANs a router reaches only on demand', () => {
+    const via = Object.fromEntries(d.nodes.filter((n) => n.type === 'lan').map((n) => [n.data.title, n.data.via]))
+    expect(via).toEqual({ app: 'fra-core-fw', db: '2 routers', internet: undefined, mgmt: 'fra-core-hub-01', 'transit-fra': '2 routers' })
+  })
+
+  it('leaves a server in 3 LANs alone', () => {
+    const vit = datacenterDiagram(m, named(m, 'vit-dr-core').id)
+    const fw3 = named(m, 'vit-fw-01').id
+    expect(node(vit, fw3).type).toBe('resource')
+    expect(node(vit, fw3).data.lans).toBeUndefined()
+    expect(edgesOf(vit, fw3).filter((e) => e.kind === 'lan')).toHaveLength(3)
+    expect(vit.edges.some((e) => e.onDemand && e.kind === 'lan')).toBe(false)
+    expect(vit.nodes.some((n) => n.data.via)).toBe(false)
+  })
+
+  it('does not lay out on-demand edges, so selecting a router keeps the layout', async () => {
+    const routed = { ...d, edges: d.edges.filter((e) => !e.onDemand) }
+    expect(layoutSignature(d)).toBe(layoutSignature(routed))
+    const l = await layoutDiagram(d, new ELK())
+    for (const e of l.edges.filter((x) => x.onDemand)) expect(e.points, e.id).toBeUndefined()
+
+    const idle = toFlow(l, d, undefined, null)
+    const shown = (f: typeof idle) => f.edges.filter((e) => !e.hidden && e.data?.kind === 'lan').map((e) => e.id)
+    expect(shown(idle)).not.toContain(`${hub}->${titled(d, 'mgmt').id}`)
+    // A member of the firewall group selected: all five group lines drawn and highlighted.
+    const sel = toFlow(l, d, named(m, 'fra-core-fw-01').id, null)
+    const fwLines = sel.edges.filter((e) => e.source === fw.id || e.target === fw.id)
+    expect(fwLines.map((e) => [!!e.hidden, e.className?.includes('hl')])).toEqual(Array(5).fill([false, true]))
+    // A LAN with a via marker selected: the router's line to it is drawn.
+    const mgmt = toFlow(l, d, titled(d, 'mgmt').id, null)
+    expect(shown(mgmt)).toContain(`${hub}->${titled(d, 'mgmt').id}`)
+    expect(mgmt.nodes.find((n) => n.id === hub)!.data.related).toBe(true)
+  })
+
+  it('leads unrouted lines to a box above from its top', async () => {
+    const l = await layoutDiagram(d, new ELK())
+    const abs = absolutePositions(l)
+    const flow = toFlow(l, d, hub, null)
+    const unrouted = flow.edges.filter((e) => !e.data?.points)
+    expect(unrouted.some((e) => e.sourceHandle === 'top-out')).toBe(true)
+    for (const e of unrouted) {
+      const [s, t] = [abs.get(e.source)!, abs.get(e.target)!]
+      const up = t.y + t.height <= s.y
+      expect([e.sourceHandle, e.targetHandle], e.id).toEqual(up ? ['top-out', 'bottom-in'] : ['bottom', 'top'])
+    }
+  })
+})
+
+interface RouterSpec {
+  /** LANs with another server each. */
+  shared?: number
+  /** LANs with nothing but the routers. */
+  stub?: number
+  /** LANs with nothing but the routers and a Cross Connect to a peer datacenter. */
+  transit?: number
+  /** A public LAN, also with nothing else on it. */
+  pub?: boolean
+  routers?: string[]
+}
+
+/** One datacenter `dc` whose routers sit in all its LANs, plus a peer datacenter behind the Cross Connects. */
+function routerModel({ shared = 0, stub = 0, transit = 0, pub = false, routers = ['edge-rtr'] }: RouterSpec): Model {
+  const nodes = new Map<string, GraphNode>()
+  const edges: GraphEdge[] = []
+  const add = (p: Partial<GraphNode> & Pick<GraphNode, 'id' | 'kind' | 'name'>) =>
+    nodes.set(p.id, { ips: [], macs: [], labels: {}, facts: [], terms: [], searchText: '', raw: null, ...p })
+  const lan = (id: string, subtype = 'private', dc = 'dc') =>
+    add({ id, kind: 'lan', name: id.replace(/(\d+)$/, '-$1'), dcId: dc, parentId: dc, subtype })
+  add({ id: 'root', kind: 'contract', name: 'Contract' })
+  add({ id: 'dc', kind: 'datacenter', name: 'dc', dcId: 'dc', parentId: 'root' })
+  add({ id: 'peer', kind: 'datacenter', name: 'peer-dc', dcId: 'peer', parentId: 'root' })
+  const mine: string[] = []
+  if (pub) {
+    mine.push('pub')
+    lan('pub', 'public')
+  }
+  for (let i = 0; i < shared; i++) {
+    mine.push(`s${i}`)
+    lan(`s${i}`)
+    add({ id: `app${i}`, kind: 'server', name: `app${i}-01`, dcId: 'dc', parentId: 'dc' })
+    edges.push({ kind: 'member', from: `app${i}`, to: `s${i}` })
+  }
+  for (let i = 0; i < stub; i++) {
+    mine.push(`x${i}`)
+    lan(`x${i}`)
+  }
+  for (let i = 0; i < transit; i++) {
+    mine.push(`t${i}`)
+    lan(`t${i}`)
+    lan(`p${i}`, 'private', 'peer')
+    add({ id: `pcc${i}`, kind: 'pcc', name: `cc-${i}`, parentId: 'root' })
+    edges.push({ kind: 'cross-connect', from: `t${i}`, to: `pcc${i}` }, { kind: 'cross-connect', from: `p${i}`, to: `pcc${i}` })
+  }
+  for (const r of routers) {
+    add({ id: r, kind: 'server', name: r, dcId: 'dc', parentId: 'dc' })
+    for (const l of mine) edges.push({ kind: 'member', from: r, to: l })
+  }
+  const children = new Map<string, string[]>()
+  const edgesByNode = new Map<string, GraphEdge[]>()
+  for (const n of nodes.values()) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n.id])
+  for (const e of edges) for (const id of [e.from, e.to]) edgesByNode.set(id, [...(edgesByNode.get(id) ?? []), e])
+  return { rootId: 'root', nodes, edges, children, edgesByNode, coverageIssues: [], warnings: [] } as unknown as Model
+}
+
+describe('routers in a synthetic datacenter', () => {
+  const lanLines = (d: Diagram, id: string) => edgesOf(d, id).filter((e) => e.kind === 'lan')
+  const has = (d: Diagram, id: string) => d.nodes.some((n) => n.id === id)
+  /** Every edge ends at a box of the diagram. */
+  const wired = (d: Diagram) => d.edges.every((e) => has(d, e.source) && has(d, e.target))
+
+  it('folds stub and transit LANs of a router in 16 LANs', async () => {
+    const m = routerModel({ shared: 2, stub: 10, transit: 4 })
+    const d = datacenterDiagram(m, 'dc')
+    const r = node(d, 'edge-rtr')
+    expect(r).toMatchObject({ type: 'router', data: { lans: 16 } })
+    // Stubs: no boxes, listed on the router, found through it.
+    expect(r.data.only).toEqual({ lans: Array.from({ length: 10 }, (_, i) => `x-${i}`), key: 'lans:edge-rtr' })
+    for (let i = 0; i < 10; i++) {
+      expect(has(d, `x${i}`)).toBe(false)
+      expect(d.anchors.get(`x${i}`)).toBe('edge-rtr')
+    }
+    // Transit LANs: no boxes, the router's line goes to the Cross Connect, named after the LAN.
+    const cc = d.edges.filter((e) => e.kind === 'cross-connect')
+    expect(cc.map((e) => [e.source, e.target, e.label, e.ref, !!e.onDemand])).toEqual(
+      Array.from({ length: 4 }, (_, i) => ['edge-rtr', `cc:pcc${i}`, `t-${i}`, `t${i}`, false]),
+    )
+    for (let i = 0; i < 4; i++) {
+      expect(has(d, `t${i}`)).toBe(false)
+      expect(d.anchors.get(`t${i}`)).toBe(`t${i}->cc:pcc${i}`)
+      expect(d.edges.some((e) => e.source === `cc:pcc${i}` && e.target === 'peer:peer')).toBe(true)
+    }
+    // Shared LANs: the first always, the other on demand with a marker.
+    expect(lanLines(d, 'edge-rtr').map((e) => [e.source, e.target, !!e.onDemand])).toEqual([
+      ['s0', 'edge-rtr', false],
+      ['edge-rtr', 's1', true],
+    ])
+    expect(node(d, 's1').data.via).toBe('edge-rtr')
+    expect(edgesOf(d, 'edge-rtr').filter((e) => !e.onDemand)).toHaveLength(5)
+    expect(wired(d)).toBe(true)
+    await layoutDiagram(d, new ELK())
+  })
+
+  it('keeps folded LANs reachable by search, selection and manual links', async () => {
+    const m = routerModel({ shared: 2, stub: 3, transit: 1 })
+    m.edges.push({ kind: 'manual', from: 't0', to: 'app1', label: 'GRE', ref: 'l1' } as GraphEdge)
+    m.edges.push({ kind: 'manual', from: 'x2', to: 'app0', label: 'IPsec', ref: 'l2' } as GraphEdge)
+    const d = datacenterDiagram(m, 'dc')
+    const manual = d.edges.filter((e) => e.kind === 'manual').map((e) => [e.source, e.target])
+    expect(manual).toEqual([
+      ['edge-rtr', 'app1'],
+      ['edge-rtr', 'app0'],
+    ])
+    expect(wired(d)).toBe(true)
+    const l = await layoutDiagram(d, new ELK())
+    const hit = toFlow(l, d, undefined, new Set(['x1']))
+    expect(hit.nodes.find((n) => n.id === 'edge-rtr')!.data.matches).toBe(1)
+    expect(toFlow(l, d, d.anchors.get('x1'), null).nodes.find((n) => n.id === 'edge-rtr')!.selected).toBe(true)
+    const transit = toFlow(l, d, d.anchors.get('t0'), null).edges.find((e) => e.id === d.anchors.get('t0'))!
+    expect(transit.className).toContain('hl')
+  })
+
+  it('keeps the layout signature whatever is selected', async () => {
+    const d = datacenterDiagram(routerModel({ shared: 3, stub: 4, transit: 2, pub: true }), 'dc')
+    const signature = layoutSignature(d)
+    const l = await layoutDiagram(d, new ELK())
+    for (const anchor of [undefined, 'edge-rtr', 's1', 'x0', 't1']) {
+      const f = toFlow(l, d, d.anchors.get(anchor ?? '') ?? anchor, null)
+      expect(f.nodes.map((n) => [n.id, n.position.x, n.position.y])).toEqual(l.nodes.map((n) => [n.id, n.x, n.y]))
+    }
+    expect(layoutSignature(datacenterDiagram(routerModel({ shared: 3, stub: 4, transit: 2, pub: true }), 'dc'))).toBe(signature)
+    // Lines on demand are not part of it.
+    expect(layoutSignature({ ...d, edges: d.edges.filter((e) => !e.onDemand) })).toBe(signature)
+  })
+
+  it('draws at most 2 lines at rest for a server in 16 LANs', () => {
+    // The public LAN, 14 LANs with other servers and one only the router uses.
+    const d = datacenterDiagram(routerModel({ pub: true, shared: 14, stub: 1 }), 'dc')
+    expect(node(d, 'edge-rtr')).toMatchObject({ type: 'router', data: { lans: 16, only: { lans: ['x-0'] } } })
+    expect(
+      lanLines(d, 'edge-rtr')
+        .filter((e) => !e.onDemand)
+        .map((e) => [e.source, e.target]),
+    ).toEqual([['pub', 'edge-rtr']])
+    expect(lanLines(d, 'edge-rtr').filter((e) => e.onDemand)).toHaveLength(14)
+    expect(d.nodes.filter((n) => n.data.via).map((n) => n.data.via)).toEqual(Array(14).fill('edge-rtr'))
+  })
+
+  it('never folds a public LAN', () => {
+    const d = datacenterDiagram(routerModel({ pub: true, stub: 4 }), 'dc')
+    expect(node(d, 'pub').type).toBe('lan')
+    expect(lanLines(d, 'edge-rtr').map((e) => [e.source, e.target, !!e.onDemand])).toEqual([['pub', 'edge-rtr', false]])
+    expect(node(d, 'edge-rtr').data.only?.lans).toHaveLength(4)
+  })
+
+  it('lets a router stand alone when all its LANs fold', async () => {
+    const d = datacenterDiagram(routerModel({ stub: 3, transit: 2 }), 'dc')
+    expect(d.nodes.filter((n) => n.type === 'lan')).toEqual([])
+    expect(lanLines(d, 'edge-rtr')).toEqual([])
+    expect(edgesOf(d, 'edge-rtr').map((e) => [e.kind, e.label])).toEqual([
+      ['cross-connect', 't-0'],
+      ['cross-connect', 't-1'],
+    ])
+    expect(wired(d)).toBe(true)
+    const l = await layoutDiagram(d, new ELK())
+    expect(l.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true)
+  })
+
+  it('treats a group of routers as one router', () => {
+    const d = datacenterDiagram(routerModel({ shared: 8, stub: 2, routers: ['edge-rtr-01', 'edge-rtr-02'] }), 'dc')
+    const g = d.nodes.find((n) => n.type === 'group')!
+    expect(g.data).toMatchObject({ title: 'edge-rtr', lans: 10, only: { lans: ['x-0', 'x-1'], key: `lans:${g.id}` } })
+    expect(d.anchors.get('x0')).toBe(g.id)
+    expect(lanLines(d, 'edge-rtr-01')).toEqual([])
+    expect(lanLines(d, g.id).filter((e) => !e.onDemand)).toHaveLength(1)
+    expect(lanLines(d, g.id).filter((e) => e.onDemand)).toHaveLength(7)
+    expect(node(d, 's1').data.via).toBe('edge-rtr')
+  })
+
+  it('keeps a LAN between two routers, drawn by the first', () => {
+    const d = datacenterDiagram(routerModel({ shared: 3, stub: 1, routers: ['a-rtr', 'b-rtr'] }), 'dc')
+    expect(['a-rtr', 'b-rtr'].map((r) => node(d, r).type)).toEqual(['router', 'router'])
+    expect(node(d, 'x0').type).toBe('lan')
+    expect(node(d, 'a-rtr').data.only).toBeUndefined()
+    const always = d.edges.filter((e) => e.target === 'x0' && !e.onDemand).map((e) => e.source)
+    expect(always).toEqual(['a-rtr'])
+    expect(node(d, 'x0').data.via).toBe('b-rtr')
+    expect(node(d, 's1').data.via).toBe('2 routers')
+  })
+
+  it('leaves a server in 3 LANs alone, even LANs only it uses', () => {
+    const d = datacenterDiagram(routerModel({ pub: true, shared: 1, stub: 1 }), 'dc')
+    expect(node(d, 'edge-rtr').type).toBe('resource')
+    expect(node(d, 'x0').type).toBe('lan')
+    expect(lanLines(d, 'edge-rtr').every((e) => !e.onDemand)).toBe(true)
+    expect(d.nodes.some((n) => n.data.via || n.data.only)).toBe(false)
+  })
+})
+
 describe('VPN tunnels, appliances and manual links', async () => {
   const snap = await fixtureModel()
   const fraVpn = named(snap, 'fra-core-vpn-01').id
@@ -258,6 +549,186 @@ describe('VPN tunnels, appliances and manual links', async () => {
           )
         }
     }
+  })
+})
+
+/**
+ * One datacenter `dc` with a farm of `servers` web servers on one LAN (each
+ * with a NIC, the first ones with a volume), a load balancer targeting all
+ * of them, and `volumes` unattached volumes.
+ */
+function farmModel(servers: number, volumes = 0): Model {
+  const nodes = new Map<string, GraphNode>()
+  const edges: GraphEdge[] = []
+  const add = (p: Partial<GraphNode> & Pick<GraphNode, 'id' | 'kind' | 'name'>) =>
+    nodes.set(p.id, { ips: [], macs: [], labels: {}, facts: [], terms: [], searchText: '', raw: null, ...p })
+  add({ id: 'root', kind: 'contract', name: 'Contract' })
+  add({ id: 'dc', kind: 'datacenter', name: 'dc', dcId: 'dc', parentId: 'root' })
+  add({ id: 'pub', kind: 'lan', name: 'public', subtype: 'public', dcId: 'dc', parentId: 'dc' })
+  add({ id: 'web', kind: 'lan', name: 'web', subtype: 'private', dcId: 'dc', parentId: 'dc' })
+  add({ id: 'nlb', kind: 'nlb', name: 'web-nlb', dcId: 'dc', parentId: 'dc' })
+  edges.push({ kind: 'listener', from: 'nlb', to: 'pub' }, { kind: 'target-lan', from: 'nlb', to: 'web' })
+  for (let i = 1; i <= servers; i++) {
+    add({ id: `w${i}`, kind: 'server', name: `web-${String(i).padStart(2, '0')}`, dcId: 'dc', parentId: 'dc' })
+    add({ id: `w${i}-nic`, kind: 'nic', name: 'nic', dcId: 'dc', parentId: `w${i}` })
+    add({ id: `w${i}-vol`, kind: 'volume', name: `web-${i}-data`, dcId: 'dc', parentId: 'dc' })
+    edges.push(
+      { kind: 'member', from: `w${i}`, to: 'web' },
+      { kind: 'attached', from: `w${i}`, to: `w${i}-vol` },
+      { kind: 'target', from: 'nlb', to: `w${i}` },
+    )
+  }
+  for (let i = 1; i <= volumes; i++) add({ id: `v${i}`, kind: 'volume', name: `old-${i}`, dcId: 'dc', parentId: 'dc' })
+  const children = new Map<string, string[]>()
+  const edgesByNode = new Map<string, GraphEdge[]>()
+  for (const n of nodes.values()) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n.id])
+  for (const e of edges) for (const id of [e.from, e.to]) edgesByNode.set(id, [...(edgesByNode.get(id) ?? []), e])
+  return { rootId: 'root', nodes, edges, children, edgesByNode, coverageIssues: [], warnings: [] } as unknown as Model
+}
+
+describe('large groups', () => {
+  const gid = 'grp:web|web'
+  const more = `more:${gid}`
+  const members = (d: Diagram, g = gid) => d.nodes.filter((n) => n.parent === g && n.type === 'member').map((n) => n.data.title)
+  const webs = (...i: number[]) => i.map((x) => `web-${String(x).padStart(2, '0')}`)
+  const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+
+  it('previews the first members and keeps those that matter', () => {
+    const list = range(1, 30)
+    expect(preview(list, false, () => false)).toEqual({ shown: range(1, GROUP_PREVIEW), hidden: range(7, 30) })
+    expect(preview(list, true, () => false).hidden).toEqual([])
+    expect(preview(range(1, GROUP_LIMIT), false, () => false).hidden).toEqual([])
+    // Pinned members take room from the preview.
+    expect(preview(list, false, (x) => x === 20 || x === 3).shown).toEqual([1, 2, 3, 4, 5, 20])
+    expect(preview(list, false, (x) => x > 22).shown).toEqual(range(23, 30))
+    // A "more" box never stands for one member.
+    expect(preview(range(1, 9), false, (x) => x > 1)).toEqual({ shown: range(1, 9), hidden: [] })
+    expect(preview(range(1, 9), false, (x) => x > 2)).toEqual({ shown: range(3, 9), hidden: [1, 2] })
+  })
+
+  it('draws a group of 30 collapsed: 6 members and "+24 more"', () => {
+    const d = datacenterDiagram(farmModel(30), 'dc')
+    expect(node(d, gid).data).toMatchObject({ title: 'web', subtitle: '30 servers' })
+    expect(node(d, gid).data.collapsible).toBeUndefined()
+    expect(members(d)).toEqual(webs(1, 2, 3, 4, 5, 6))
+    expect(node(d, more)).toMatchObject({ type: 'more', parent: gid, width: 196, height: 42, data: { title: '+24 more', more: 24 } })
+    expect(d.nodes.filter((n) => n.parent === gid).at(-1)!.id).toBe(more)
+    // Hidden members, their NICs and volumes are found on the "more" box.
+    for (const id of ['w7', 'w30', 'w12-nic', 'w20-vol']) expect(d.anchors.get(id)).toBe(more)
+    expect(d.anchors.get('w6')).toBe('w6')
+    expect(d.anchors.get('w6-nic')).toBe('w6')
+    // The LAN line stays on the group; load balancer targets: one line to the "more" box.
+    expect(edgesOf(d, gid).map((e) => e.source)).toEqual(['web'])
+    const targets = d.edges.filter((e) => e.kind === 'target')
+    expect(targets.map((e) => e.target)).toEqual([...range(1, 6).map((i) => `w${i}`), more])
+    expect(targets.every((e) => e.onDemand)).toBe(true)
+  })
+
+  it('shows every member when expanded, with a way back', () => {
+    const d = datacenterDiagram(farmModel(30), 'dc', { expanded: new Set([gid]) })
+    expect(members(d)).toHaveLength(30)
+    expect(d.nodes.some((n) => n.type === 'more')).toBe(false)
+    expect(node(d, gid).data.collapsible).toBe(true)
+    expect(d.anchors.get('w30')).toBe('w30')
+    // A small group has nothing to collapse.
+    const small = datacenterDiagram(farmModel(8), 'dc', { expanded: new Set([gid]) })
+    expect(members(small)).toHaveLength(8)
+    expect(node(small, gid).data.collapsible).toBeUndefined()
+  })
+
+  it('always shows the selection, appliances and changes', () => {
+    const sel = (selected: string) => members(datacenterDiagram(farmModel(30), 'dc', { selected }))
+    expect(sel('w17')).toEqual(webs(1, 2, 3, 4, 5, 17))
+    // A NIC or volume: its server.
+    expect(sel('w20-nic')).toEqual(webs(1, 2, 3, 4, 5, 20))
+    expect(sel('w25-vol')).toEqual(webs(1, 2, 3, 4, 5, 25))
+    expect(sel('w2')).toEqual(webs(1, 2, 3, 4, 5, 6))
+    const d17 = datacenterDiagram(farmModel(30), 'dc', { selected: 'w17' })
+    expect(node(d17, more).data.more).toBe(24)
+    expect(d17.anchors.get('w17')).toBe('w17')
+    expect(d17.anchors.get('w6')).toBe(more)
+
+    const m = farmModel(30)
+    m.nodes.get('w9')!.appliance = { title: 'firewall', confidence: 'medium', reasons: [] }
+    m.nodes.get('w28')!.change = 'added'
+    m.nodes.get('w11')!.change = 'changed'
+    const d = datacenterDiagram(m, 'dc', { selected: 'w30' })
+    expect(members(d)).toEqual(webs(1, 2, 9, 11, 28, 30))
+    expect(node(d, more).data.more).toBe(24)
+  })
+
+  it('counts search hits among hidden members on the "more" box', async () => {
+    const d = datacenterDiagram(farmModel(30), 'dc')
+    const l = await layoutDiagram(d, new ELK())
+    // Three hidden members match (one also through its volume, one only through its NIC).
+    const f = toFlow(l, d, undefined, new Set(['w2', 'w12', 'w12-vol', 'w13-nic', 'w14']))
+    const flowNode = (id: string) => f.nodes.find((n) => n.id === id)!
+    expect(flowNode(more).data.matches).toBe(3)
+    expect(d.hidden?.get('w13-nic')).toBe('w13')
+    expect(d.hidden?.has('w2')).toBe(false)
+    expect(flowNode('w2').data.matches).toBe(1)
+    expect(flowNode(more).data.dim).toBe(false)
+    expect(flowNode('w3').data.dim).toBe(true)
+    expect(flowNode(more).selectable).toBe(false)
+  })
+
+  it('lays the collapsed and the expanded group out separately, the selection inside the same box', async () => {
+    const m = farmModel(30)
+    const elk = new ELK()
+    const rest = datacenterDiagram(m, 'dc')
+    const open = datacenterDiagram(m, 'dc', { expanded: new Set([gid]) })
+    const picked = datacenterDiagram(m, 'dc', { selected: 'w17' })
+    expect(layoutSignature(open)).not.toBe(layoutSignature(rest))
+    expect(layoutSignature(picked)).not.toBe(layoutSignature(rest))
+    // Selecting what is shown anyway, or something else, keeps the layout.
+    for (const selected of ['w3', 'nlb', 'web'])
+      expect(layoutSignature(datacenterDiagram(m, 'dc', { selected }))).toBe(layoutSignature(rest))
+    expect(layoutSignature(datacenterDiagram(m, 'dc', { expanded: new Set(['grp:other']) }))).toBe(layoutSignature(rest))
+    const size = async (d: Diagram) => {
+      const g = (await layoutDiagram(d, elk)).nodes.find((n) => n.id === gid)!
+      return [g.width, g.height]
+    }
+    // A revealed member takes the place of a previewed one: the group keeps its size.
+    expect(await size(picked)).toEqual(await size(rest))
+    const [w, h] = await size(open)
+    expect(w * h).toBeGreaterThan((await size(rest)).reduce((a, b) => a * b))
+  })
+
+  it('collapses large leftover groups too', () => {
+    const d = datacenterDiagram(farmModel(2, 12), 'dc')
+    const g = titled(d, 'Unattached volumes')
+    expect(g.data.subtitle).toBe('12 resources')
+    expect(members(d, g.id)).toEqual(['old-1', 'old-2', 'old-3', 'old-4', 'old-5', 'old-6'])
+    expect(node(d, `more:${g.id}`).data.title).toBe('+6 more')
+    expect(d.anchors.get('v12')).toBe(`more:${g.id}`)
+    expect(members(datacenterDiagram(farmModel(2, 12), 'dc', { selected: 'v12' }), g.id)).toContain('old-12')
+    expect(members(datacenterDiagram(farmModel(2, 12), 'dc', { expanded: new Set([g.id]) }), g.id)).toHaveLength(12)
+  })
+
+  it('unfolds a router’s LANs through the same switch', async () => {
+    const m = routerModel({ shared: 2, stub: 3, transit: 1 })
+    const folded = datacenterDiagram(m, 'dc')
+    const open = datacenterDiagram(m, 'dc', { expanded: new Set(['lans:edge-rtr']) })
+    expect(node(open, 'edge-rtr').data.only).toEqual({ lans: ['x-0', 'x-1', 'x-2'], key: 'lans:edge-rtr', open: true })
+    for (const id of ['x0', 'x1', 'x2', 't0']) {
+      expect(open.nodes.some((n) => n.id === id)).toBe(true)
+      expect(open.anchors.get(id)).toBe(id)
+    }
+    // Stub LANs hang off the router; the transit LAN leads to its Cross Connect again.
+    expect(open.edges.filter((e) => e.source === 'edge-rtr' && /^x\d$/.test(e.target) && !e.onDemand)).toHaveLength(3)
+    expect(open.edges.some((e) => e.source === 't0' && e.target === 'cc:pcc0')).toBe(true)
+    expect(layoutSignature(open)).not.toBe(layoutSignature(folded))
+    await layoutDiagram(open, new ELK())
+  })
+
+  it('collapses the demo shop’s web farm', () => {
+    return fixtureModel().then((m) => {
+      const d = datacenterDiagram(m, named(m, 'fra-prod-shop').id)
+      const g = titled(d, 'shop-web')
+      expect(g.data.subtitle).toBe('12 servers · Cube')
+      expect(members(d, g.id)).toEqual(['shop-web-01', 'shop-web-02', 'shop-web-03', 'shop-web-04', 'shop-web-05', 'shop-web-06'])
+      expect(node(d, `more:${g.id}`).data.title).toBe('+6 more')
+    })
   })
 })
 

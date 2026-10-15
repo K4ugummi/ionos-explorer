@@ -29,6 +29,6 @@ export default defineConfig({
   plugins: [react(), contentSecurityPolicy()],
   // The demo snapshot is imported from ../fixtures.
   server: { fs: { allow: ['..'] } },
-  // Served locally as one app; splitting the ~190 kB (gzip) bundle buys nothing.
-  build: { chunkSizeWarningLimit: 800 },
+  // The diagram (React Flow, ELK client) is a lazy chunk, see App.tsx; the ELK
+  // worker is a file of its own, fetched on the first layout.
 })

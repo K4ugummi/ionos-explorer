@@ -5,12 +5,18 @@ import { DiagramActions, type FlowEdge, type FlowNode, type FlowNodeData } from 
 import { midpoint, roundedPath } from './geometry'
 import type { Point } from './types'
 
-/** Edges are routed by the layout; handles only anchor the unrouted ones. */
+/**
+ * Edges are routed by the layout; handles only anchor the unrouted ones:
+ * down from the bottom into the top, or, to a box above, up from the top
+ * into its bottom (`toFlow` picks them).
+ */
 function Handles() {
   return (
     <>
-      <Handle type="target" position={Position.Top} isConnectable={false} className="dg-handle" />
-      <Handle type="source" position={Position.Bottom} isConnectable={false} className="dg-handle" />
+      <Handle type="target" id="top" position={Position.Top} isConnectable={false} className="dg-handle" />
+      <Handle type="source" id="bottom" position={Position.Bottom} isConnectable={false} className="dg-handle" />
+      <Handle type="source" id="top-out" position={Position.Top} isConnectable={false} className="dg-handle" />
+      <Handle type="target" id="bottom-in" position={Position.Bottom} isConnectable={false} className="dg-handle" />
     </>
   )
 }
@@ -34,14 +40,90 @@ function classes(d: FlowNodeData, selected: boolean, extra = '') {
 }
 
 export function GroupNode({ data }: NodeProps<FlowNode>) {
-  const { title, subtitle, kind } = data.node.data
+  const { setOpen } = useContext(DiagramActions)
+  const { title, subtitle, kind, lans, only, collapsible } = data.node.data
+  const extra = kind ? `dg-group-servers${lans ? ' dg-group-router' : ''}` : 'dg-group-plain'
   return (
-    <div className={classes(data, false, kind ? 'dg-group-servers' : 'dg-group-plain')}>
+    <div className={classes(data, false, extra)}>
+      {/* Server groups carry their members' LAN edges; without handles React Flow drops them. */}
+      <Handles />
       <div className="dg-group-label">
         <span className="t">{title}</span>
         {subtitle && <span className="s">{subtitle}</span>}
+        {lans && <Lans count={lans} />}
+        {only && <OnlyHere only={only} />}
+        {collapsible && (
+          <button
+            type="button"
+            className="dg-collapse nodrag"
+            title="Show only a few members again"
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpen(data.node.id, false)
+            }}
+          >
+            Collapse
+          </button>
+        )}
       </div>
     </div>
+  )
+}
+
+/** LANs nothing but this router uses: folded into it; a click shows them as boxes, another folds them again. */
+function OnlyHere({ only }: { only: { lans: string[]; key: string; open?: boolean } }) {
+  const { setOpen } = useContext(DiagramActions)
+  const n = only.lans.length
+  return (
+    <button
+      type="button"
+      className="dg-only nodrag"
+      aria-expanded={!!only.open}
+      title={`Only on this router: ${only.lans.join(', ')}\n${only.open ? 'Click to fold its LANs into it again' : 'Click to show them as boxes'}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        setOpen(only.key, !only.open)
+      }}
+    >
+      {/* Open, its LANs that lead only to a Cross Connect are boxes again too, so no count. */}
+      {only.open ? 'fold LANs again' : `+${n} ${n === 1 ? 'LAN' : 'LANs'} only here`}
+    </button>
+  )
+}
+
+/** The members a collapsed group does not show; a click shows them all. */
+export function MoreNode({ data }: NodeProps<FlowNode>) {
+  const { setOpen } = useContext(DiagramActions)
+  const d = data.node.data
+  const hits = data.matches
+  return (
+    <div className={classes(data, false)}>
+      {/* Load balancer targets in the group end here. */}
+      <Handles />
+      <button
+        type="button"
+        className="dg-more-btn nodrag"
+        title={[d.subtitle, hits > 0 && `${hits === 1 ? '1 search hit is' : `${hits} search hits are`} among them`]
+          .filter(Boolean)
+          .join('\n')}
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(data.node.parent!, true)
+        }}
+      >
+        <span className="t">{d.title}</span>
+        {hits > 0 && <span className="dg-hits">{hits === 1 ? '1 match' : `${hits} matches`}</span>}
+      </button>
+    </div>
+  )
+}
+
+/** A router's LAN count; the lines to them are drawn while it is selected. */
+function Lans({ count }: { count: number }) {
+  return (
+    <span className="dg-lans" title="Lines to all its LANs are drawn while it is selected">
+      {count} LANs
+    </span>
   )
 }
 
@@ -111,7 +193,16 @@ export function BoxNode({ data, selected }: NodeProps<FlowNode>) {
   return (
     <div
       className={classes(data, selected)}
-      title={[d.title, d.subtitle, d.tag && `Network appliance: ${d.tag}`].filter(Boolean).join('\n')}
+      title={[
+        d.title,
+        d.subtitle,
+        d.tag && `Network appliance: ${d.tag}`,
+        d.lans && `In ${d.lans} LANs: select it to draw all its lines`,
+        d.only && `Only on this router: ${d.only.lans.join(', ')}`,
+        d.via && `Also reached through ${d.via}: select this LAN to draw the line`,
+      ]
+        .filter(Boolean)
+        .join('\n')}
     >
       <Handles />
       <div className="dg-head">
@@ -120,7 +211,19 @@ export function BoxNode({ data, selected }: NodeProps<FlowNode>) {
         {d.tag && <span className={`dg-tag ${d.tagLevel ?? ''}`}>{d.tag}</span>}
         {d.inactive && <span className="dg-off" title="Not running" />}
       </div>
+      {d.via && <span className="dg-via">via {d.via}</span>}
       {d.subtitle && <div className="s">{d.subtitle}</div>}
+      {d.lans && (
+        <div className="s">
+          <Lans count={d.lans} />
+          {d.only && (
+            <>
+              {' · '}
+              <OnlyHere only={d.only} />
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -32,10 +32,8 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
 
   const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent ?? root.id]))
   const routed = new Set<string>()
-  for (const e of diagram.edges) {
-    const container = parentOf.get(e.source)
-    if (e.onDemand || !container || container !== parentOf.get(e.target)) continue
-    elkNodes.get(container)!.edges!.push({ id: e.id, sources: [e.source], targets: [e.target] })
+  for (const e of routedEdges(diagram)) {
+    elkNodes.get(parentOf.get(e.source)!)!.edges!.push({ id: e.id, sources: [e.source], targets: [e.target] })
     routed.add(e.id)
   }
 
@@ -78,4 +76,80 @@ export function absolutePositions(layout: Layout): Map<string, Point & { width: 
     out.set(n.id, { x: n.x + (p?.x ?? 0), y: n.y + (p?.y ?? 0), width: n.width, height: n.height })
   }
   return out
+}
+
+/** Edges ELK routes: both ends in the same group (or both top level), and always drawn. */
+function routedEdges(diagram: Diagram) {
+  const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent ?? '']))
+  return diagram.edges.filter((e) => !e.onDemand && parentOf.has(e.source) && parentOf.get(e.source) === parentOf.get(e.target))
+}
+
+/**
+ * Everything the layout depends on, as a string: node ids, types, parents,
+ * sizes and ELK options in diagram order (ELK keeps the model order), plus
+ * the edges ELK routes. Titles, pills, tags and change markers only affect
+ * rendering, so diagrams that differ in those share a layout.
+ */
+export function layoutSignature(diagram: Diagram): string {
+  return JSON.stringify([
+    diagram.key,
+    diagram.rootLayout,
+    diagram.nodes.map((n) => [n.id, n.type, n.parent ?? '', n.width ?? -1, n.height ?? -1, n.layout ?? null]),
+    routedEdges(diagram).map((e) => [e.id, e.source, e.target]),
+  ])
+}
+
+/**
+ * A layout with the current diagram's node data and edges on the cached
+ * positions. Only for a layout with the same signature: every node is in
+ * it, and routed edges keep their points.
+ */
+export function withData(layout: Layout, diagram: Diagram): Layout {
+  const nodes = new Map(diagram.nodes.map((n) => [n.id, n]))
+  const points = new Map(layout.edges.flatMap((e) => (e.points ? [[e.id, e.points] as const] : [])))
+  return {
+    key: diagram.key,
+    nodes: layout.nodes.map((p) => ({ ...p, ...nodes.get(p.id), x: p.x, y: p.y, width: p.width, height: p.height })),
+    edges: diagram.edges.map((e): PlacedEdge => (points.has(e.id) ? { ...e, points: points.get(e.id) } : { ...e })),
+  }
+}
+
+export interface CachedLayout {
+  promise: Promise<Layout>
+  /** Set once the layout is done, so a cached view can be drawn without waiting a tick. */
+  layout?: Layout
+}
+
+/**
+ * Layouts by signature, the most recently used `max` kept. Model rebuilds
+ * (annotations, comparisons) produce new diagram objects with the same
+ * signature, so they reuse the layout instead of running ELK again.
+ */
+export function layoutCache(run: (diagram: Diagram) => Promise<Layout>, max = 30) {
+  const entries = new Map<string, CachedLayout>()
+  return {
+    /** The layout for a diagram, run now if it is not cached. */
+    get(diagram: Diagram, signature = layoutSignature(diagram)): CachedLayout {
+      let entry = entries.get(signature)
+      if (entry) {
+        entries.delete(signature)
+      } else {
+        const promise = run(diagram)
+        const e: CachedLayout = { promise }
+        promise.then(
+          (layout) => (e.layout = layout),
+          () => entries.get(signature) === e && entries.delete(signature),
+        )
+        entry = e
+      }
+      entries.set(signature, entry)
+      for (const oldest of entries.keys()) {
+        if (entries.size <= max) break
+        entries.delete(oldest)
+      }
+      return entry
+    },
+    /** The cached layout, without running one. */
+    peek: (signature: string) => entries.get(signature),
+  }
 }

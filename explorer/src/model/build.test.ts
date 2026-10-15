@@ -12,7 +12,7 @@ describe('buildModel on the demo fixture', async () => {
   it('builds the contract tree', () => {
     expect(m.nodes.get(m.rootId)?.name).toBe('Contract 31812345')
     expect(byKind(m, 'datacenter')).toHaveLength(14)
-    expect(byKind(m, 'server')).toHaveLength(69)
+    expect(byKind(m, 'server')).toHaveLength(75)
     expect(m.warnings).toEqual([])
     for (const n of m.nodes.values()) {
       if (n.id !== m.rootId) expect(m.nodes.has(n.parentId!), `${n.kind} ${n.name}`).toBe(true)
@@ -32,7 +32,7 @@ describe('buildModel on the demo fixture', async () => {
     const targets = m.edges.filter((e) => e.from === nlb.id && e.kind === 'target').map((e) => m.nodes.get(e.to)!.name)
     expect(targets.sort()).toEqual(['fra-core-web-01', 'fra-core-web-02', 'fra-core-web-03', 'fra-core-web-04'])
     const tg = byName(m, 'shop-alb-web')
-    expect(m.edges.filter((e) => e.from === tg.id && e.kind === 'target')).toHaveLength(6)
+    expect(m.edges.filter((e) => e.from === tg.id && e.kind === 'target')).toHaveLength(12)
   })
 
   it('links IP block addresses to their consumers', () => {

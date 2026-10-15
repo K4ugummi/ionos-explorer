@@ -50,9 +50,16 @@ start screen to open it.
 
 The explorer flags servers that look like routers, firewalls or VPN
 endpoints (from image names, firewall rules, LAN placement; always with the
-reasons) and draws IONOS VPN Gateway tunnels. Links the API cannot see, such
-as an IPsec tunnel between two Cisco VMs, can be added in a resource's
-details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
+reasons) and draws IONOS VPN Gateway tunnels. A server in four or more
+LANs is drawn as a router: one line to its first LAN, the others while it
+or one of those LANs is selected; LANs only it uses fold into its box, and
+a LAN that only leads to a Cross Connect becomes a line from the router to
+the Cross Connect ("+N LANs only here" unfolds them). Groups of more than
+eight servers show six and a "+N more" box that expands them; the selected
+server, appliances and changes since a compared snapshot are always shown,
+and search hits among the hidden ones are counted on the box. Links the
+API cannot see, such as an IPsec tunnel between two Cisco VMs, can be
+added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
 keeps a record that may be outdated (`dhcp:off` finds them), and a
 correction, entered per NIC or pasted as a list on the Overview page, is
 shown next to the IONOS value. Links and corrections stay in your browser;

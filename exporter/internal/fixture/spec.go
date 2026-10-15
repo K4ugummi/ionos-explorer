@@ -108,6 +108,7 @@ var pccSpecs = []pccSpec{
 	{"vit-dr", "DR replication network"},
 	{"lhr-link", "UK edge to staging"},
 	{"fra-legacy-link", "Old interconnect, no longer used"},
+	{"fra-data-sync", "Core hub to the data platform (bulk sync)"},
 }
 
 var cubeTemplates = []struct {
@@ -141,6 +142,10 @@ var dcSpecs = []dcSpec{
 			{"app", "app", false, ""},
 			{"db", "db", false, ""},
 			{"mgmt", "mgmt", false, "fra-mgmt"},
+			// Only the hub uses these: partner networks and a sync link to the data platform.
+			{"partner-a", "partner-a", false, ""},
+			{"partner-b", "partner-b", false, ""},
+			{"sync", "data-sync", false, "fra-data-sync"},
 		},
 		Servers: []serverSpec{
 			{Name: "fra-core-fw-%02d", Count: 2, Type: "ENTERPRISE", Cores: 4, RAM: 8192, LANs: []string{"inet", "transit", "app", "db", "mgmt"}, Role: "firewall", PublicVIP: true},
@@ -148,8 +153,9 @@ var dcSpecs = []dcSpec{
 			{Name: "fra-core-web-%02d", Count: 4, Type: "CUBE", Template: "CUBES M", LANs: []string{"app"}, Role: "web"},
 			{Name: "fra-core-api-%02d", Count: 3, Type: "VCPU", Cores: 4, RAM: 8192, LANs: []string{"app", "db"}, Role: "api", DataGB: 50},
 			{Name: "fra-core-db-%02d", Count: 2, Type: "ENTERPRISE", Cores: 8, RAM: 32768, LANs: []string{"db"}, Role: "database", DataGB: 500},
-			// A plain-named VM in four private LANs: only its placement gives it away.
-			{Name: "fra-core-hub-%02d", Count: 1, Type: "VCPU", Cores: 2, RAM: 4096, LANs: []string{"transit", "app", "db", "mgmt"}, Role: "hub"},
+			// A plain-named VM in seven private LANs: only its placement gives it away.
+			// Three of them (partners, sync link) have nothing else on them here, as is common for routers.
+			{Name: "fra-core-hub-%02d", Count: 1, Type: "VCPU", Cores: 2, RAM: 4096, LANs: []string{"transit", "app", "db", "mgmt", "partner-a", "partner-b", "sync"}, Role: "hub"},
 		},
 		NAT: &natSpec{"fra-core-natgw", []string{"app", "db"}},
 		NLB: &lbSpec{Name: "fra-core-nlb", Listener: "inet", Target: "app", Port: 443, TargetRole: "web"},
@@ -163,7 +169,8 @@ var dcSpecs = []dcSpec{
 			{"web", "web", false, ""},
 		},
 		Servers: []serverSpec{
-			{Name: "shop-web-%02d", Count: 6, Type: "CUBE", Template: "CUBES L", LANs: []string{"web", "transit"}, Role: "web"},
+			// A web farm: more Cubes than a diagram group shows at once.
+			{Name: "shop-web-%02d", Count: 12, Type: "CUBE", Template: "CUBES L", LANs: []string{"web", "transit"}, Role: "web"},
 			{Name: "shop-cache-%02d", Count: 2, Type: "VCPU", Cores: 2, RAM: 16384, LANs: []string{"web"}, Role: "cache"},
 		},
 		NAT: &natSpec{"shop-natgw", []string{"web"}},
@@ -176,9 +183,10 @@ var dcSpecs = []dcSpec{
 			{"transit", "transit-fra", false, "fra-backbone"},
 			{"db", "db", false, ""},
 			{"k8s", "k8s-nodes", false, ""},
+			{"sync", "data-sync", false, "fra-data-sync"},
 		},
 		Servers: []serverSpec{
-			{Name: "data-etl-%02d", Count: 2, Type: "ENTERPRISE", Cores: 16, RAM: 65536, LANs: []string{"transit", "db"}, Role: "etl", DataGB: 1000},
+			{Name: "data-etl-%02d", Count: 2, Type: "ENTERPRISE", Cores: 16, RAM: 65536, LANs: []string{"transit", "db", "sync"}, Role: "etl", DataGB: 1000},
 		},
 		NodePools: []nodePoolSpec{
 			{Cluster: "k8s-prod-fra", Name: "np-general", Nodes: 6, Cores: 4, RAM: 16384, LANs: []string{"k8s", "db"}},

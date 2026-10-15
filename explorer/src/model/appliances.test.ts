@@ -35,7 +35,7 @@ describe('network appliances', async () => {
     const hub = named(m, 'fra-core-hub-01')
     // fra-prod-core's description mentions "edge" firewalls.
     expect([hub.appliance?.title, hub.appliance?.confidence]).toEqual(['Likely router or firewall', 'medium'])
-    expect(hub.appliance!.reasons.join(' ')).toMatch(/4 LANs are more than an ordinary server needs.*fra-prod-core mentions “edge”/)
+    expect(hub.appliance!.reasons.join(' ')).toMatch(/7 LANs are more than an ordinary server needs.*fra-prod-core mentions “edge”/)
 
     const dc = m.nodes.get(hub.dcId!)!
     const withDc = (description: string) => {

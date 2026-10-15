@@ -5,7 +5,6 @@ import { AnnotationsContext } from './annotations/context'
 import { diagramFor } from './diagram/build'
 import { CompareContext } from './diff/context'
 import { compareModels, markChanges } from './diff/diff'
-import { DiagramView } from './diagram/DiagramView'
 import type { GraphNode, Model } from './model/types'
 import { search } from './search/search'
 import { Changes } from './ui/Changes'
@@ -15,12 +14,55 @@ import { Overview } from './ui/Overview'
 import { SearchPanel } from './ui/SearchPanel'
 import { useHashState } from './ui/useHashState'
 
+// React Flow, ELK and the canvas are only needed on the Diagram tab: their own
+// chunk, fetched once the user starts opening a snapshot (see App).
+type DiagramViewType = typeof import('./diagram/DiagramView').DiagramView
+let diagramChunk: Promise<DiagramViewType> | undefined
+let loadedDiagram: DiagramViewType | undefined
+const loadDiagram = () =>
+  (diagramChunk ??= import('./diagram/DiagramView').then(
+    (m) => (loadedDiagram = m.DiagramView),
+    (err: unknown) => {
+      diagramChunk = undefined // try again next time
+      throw err
+    },
+  ))
+
+/**
+ * The diagram component, once its chunk is there. Not React.lazy: a lazy
+ * component suspends even when its chunk is already loaded, and React keeps
+ * a Suspense fallback it has shown for at least 300 ms.
+ */
+function useDiagramView() {
+  const [state, setState] = useState<{ view?: DiagramViewType; error?: string }>(() => ({ view: loadedDiagram }))
+  useEffect(() => {
+    if (state.view) return
+    let live = true
+    loadDiagram().then(
+      (view) => live && setState({ view }),
+      (err: unknown) => live && setState({ error: err instanceof Error ? err.message : String(err) }),
+    )
+    return () => {
+      live = false
+    }
+  }, [state.view])
+  return state
+}
+
 /** Width of the detail drawer over the diagram (see .drawer). */
 const DRAWER_WIDTH = 440
 
 function App() {
   // `older`: a snapshot of the same contract to compare with. The open one is always the newer.
   const [open, setOpen] = useState<{ model: Model; demoLinks?: Annotations; older?: Model } | null>(null)
+  // Fetch the diagram code once the user starts opening a snapshot, while it is read.
+  useEffect(() => {
+    if (open) return
+    const preload = () => void loadDiagram().catch(() => {}) // reported when the diagram is shown
+    const events = ['pointerdown', 'keydown', 'dragenter'] as const
+    for (const e of events) window.addEventListener(e, preload, { once: true, capture: true })
+    return () => events.forEach((e) => window.removeEventListener(e, preload, { capture: true }))
+  }, [open])
   if (!open) return <OpenScreen onLoaded={(model, demoLinks) => setOpen({ model, demoLinks })} />
   const compare = (other?: Model) =>
     setOpen((o) => {
@@ -73,6 +115,8 @@ function Explorer({
     () => ({ annotations, update: updateAnnotations, dangling: applied.dangling, staleIps: applied.staleIps, contract }),
     [annotations, updateAnnotations, applied.dangling, applied.staleIps, contract],
   )
+
+  const { view: DiagramView, error: diagramError } = useDiagramView()
 
   const [params, update] = useHashState()
   const viewParam = params.get('view')
@@ -156,15 +200,21 @@ function Explorer({
             <SearchPanel model={model} query={query} setQuery={setQuery} selectedId={selected?.id} onSelect={navigate} />
             {view === 'diagram' ? (
               <main className="stage">
-                <DiagramView
-                  model={model}
-                  dcId={dcId}
-                  selectedId={shown?.id}
-                  matches={matches}
-                  onSelect={select}
-                  onOpenDc={openDc}
-                  rightInset={shown && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
-                />
+                {DiagramView ? (
+                  <DiagramView
+                    model={model}
+                    dcId={dcId}
+                    selectedId={shown?.id}
+                    matches={matches}
+                    onSelect={select}
+                    onOpenDc={openDc}
+                    rightInset={shown && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
+                  />
+                ) : (
+                  <div className="dg-status" role="status">
+                    {diagramError ? `Could not load the diagram: ${diagramError}` : 'Loading the diagram…'}
+                  </div>
+                )}
                 {shown && (
                   <aside className="drawer" aria-label="Details">
                     <button className="btn small drawer-close" onClick={() => select(undefined)} aria-label="Close details">

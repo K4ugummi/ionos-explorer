@@ -24,7 +24,7 @@ describe('search on the demo fixture', async () => {
   })
 
   it('filters servers by type, with DCD aliases', () => {
-    expect(search(m, 'type:cube').hits).toHaveLength(23)
+    expect(search(m, 'type:cube').hits).toHaveLength(29)
     expect(search(m, 'type:dedicated').hits).toHaveLength(22)
     expect(search(m, 'type:gpu').hits.map((h) => h.node.name)).toEqual(['gpu-trainer-01'])
   })

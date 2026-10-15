@@ -125,15 +125,67 @@ Modules:
      tiered by distance from the internet (the LAN a resource reaches first
      is drawn above it, the others below). Servers sharing a name stem and
      the same LANs collapse into one packed group with a single link per LAN.
+     A group of more than `GROUP_LIMIT` (8) members, server group or
+     leftover group, is drawn collapsed: the first `GROUP_PREVIEW` (6) by
+     name and a member-sized "+N more" box (type `more`) that expands it; an
+     expanded group has a "Collapse" button in its header. Members that
+     matter are always shown and take room from the preview, so the group
+     keeps its size: the selection (for a NIC or volume, its server),
+     network appliances, and what is new or changed in a comparison. Hidden
+     members, their NICs and volumes are anchored to the "more" box (load
+     balancer targets in it get one on-demand line there); search hits
+     among them are counted on it ("+6 more · 3 matches"), but never change
+     the layout. The header keeps the full count.
      Load balancer targets show only while the balancer or a target is
-     selected. Cross Connects lead to peer datacenter nodes that open their
-     diagram. Unattached volumes and unknown resources get boxes of their own.
+     selected. A server (or server group) in `ROUTER_LANS` (4, the same
+     number that flags an appliance) or more LANs is a *router* box with a
+     "N LANs" line. A non-public LAN with nothing on it but that one router
+     box is folded into it: a *stub* LAN (no Cross Connect) gets no box and
+     is counted as "+N LANs only here" on the router (a click unfolds the
+     router: its stub and transit LANs come back as boxes, "fold LANs
+     again" folds them); a *transit* LAN (only Cross
+     Connects besides the router) gets no box either, and the router's line
+     goes straight to the Cross Connect, labelled with the LAN name. Their
+     anchors point to the router box (stub) or to that line (transit), so
+     search and selection still find them; a manual link to a folded LAN
+     starts at the router. Of the remaining LANs, the router always draws
+     the line to its first one and to LANs nothing else connects (of two
+     routers sharing such a LAN, the first; a LAN between two routers is
+     never folded); its other LAN lines are on demand, drawn while the
+     router or that LAN is selected, and those LANs carry a "via router"
+     marker. LAN tiers still count every membership. Cross Connects lead to peer
+     datacenter nodes that open their diagram. Unattached volumes and
+     unknown resources get boxes of their own.
+
+  On-demand lines (load balancer targets, router LANs) are not given to
+  ELK, so they do not shape the layout and selecting does not lay a view
+  out again; like lines across group borders they are drawn as curves, from
+  the top of a box when the other end lies above it.
 
   Every model node has an *anchor* (the box or line that shows it: a NIC or
   volume → its server, everything in a datacenter → its card on the contract
   view), so search hits light up and selections from search, links or the URL
   move the diagram there. Layout of a 240-datacenter contract takes under a
   second (see `scale.test.ts`).
+
+  What the user opened (expanded groups, unfolded routers: `lans:<box>`)
+  lives in the canvas per view and goes into `datacenterDiagram` as
+  `options.expanded`, together with the selection (`options.selected`);
+  both only add or swap boxes, so they reach the layout through the
+  signature below. Opening or closing a box keeps it in view once laid out.
+
+  Layouts are cached by a *layout signature* (`layoutSignature` in
+  `layout.ts`: node ids, types, parents, sizes, ELK options and the edges ELK
+  routes), the 30 most recently used kept. A model rebuilt for annotations
+  or a comparison reuses them: new titles, change markers and links ELK
+  does not route are put on the cached positions (`withData`). Only a new
+  box or a new link between siblings lays a view out again. Each view is
+  fitted when it opens and again when the canvas changes size, unless the
+  user has panned or zoomed since. The legend sits in the bar while it fits
+  on one line, otherwise behind a "Legend" button. React Flow, the ELK
+  client and the canvas are a chunk of their own, fetched when the user
+  starts opening a snapshot (first click, key or drag on the open screen);
+  the 1.6 MB ELK worker is fetched on the first layout.
 - `src/ui`: open screen, search panel, detail panel (properties, connections, contents, raw JSON), contract overview with the visibility report. Selection and query live in the URL hash.
 
 ### Connectivity the API cannot see

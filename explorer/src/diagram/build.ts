@@ -1,4 +1,5 @@
 import { countsText } from '../diff/diff'
+import { MANY_LANS } from '../model/appliances'
 import { KINDS, subtypeLabel } from '../model/kinds'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import type { Diagram, DiagramEdge, DiagramNode, NodeData } from './types'
@@ -9,6 +10,7 @@ export const SIZE = {
   hub: { width: 220, height: 52 },
   peer: { width: 220, height: 52 },
   resource: { width: 236, height: 54 },
+  router: { width: 280, height: 72 },
   member: { width: 196, height: 42 },
   internet: { width: 180, height: 44 },
   external: { width: 210, height: 52 },
@@ -311,9 +313,100 @@ interface Device {
   ordered?: boolean
 }
 
+/**
+ * A server in this many LANs is drawn as a router: one line to its first LAN
+ * at rest, the rest while it (or such a LAN) is selected. Real routers and
+ * firewall VMs sit in 7, 8 or 16 LANs, and a line per LAN crosses the whole
+ * view. The same number that marks a server as a likely network appliance.
+ */
+export const ROUTER_LANS = MANY_LANS
+
+/** A group with more members than this is drawn collapsed: `GROUP_PREVIEW` of them and a "+N more" box. */
+export const GROUP_LIMIT = 8
+export const GROUP_PREVIEW = 6
+
+/** What a datacenter view shows beyond its state at rest. Part of the layout: new boxes. */
+export interface DiagramOptions {
+  /** Boxes opened by the user: large groups shown in full, routers with their folded LANs. */
+  expanded?: ReadonlySet<string>
+  /** The selected model node; inside a collapsed group its server is shown anyway. */
+  selected?: string
+}
+
+/**
+ * Which members of a group are drawn. A group of more than `GROUP_LIMIT`
+ * shows the first `GROUP_PREVIEW` by name and a "+N more" box, unless it is
+ * expanded. Members that matter (`pinned`) are always shown and take room
+ * from the preview, so selecting one keeps the group's size. A "more" box
+ * never stands for a single member: that member is drawn instead.
+ */
+export function preview<T>(members: T[], open: boolean, pinned: (m: T) => boolean): { shown: T[]; hidden: T[] } {
+  if (open || members.length <= GROUP_LIMIT) return { shown: members, hidden: [] }
+  const keep = new Set(members.filter(pinned))
+  let room = GROUP_PREVIEW - keep.size
+  for (const m of members) if (room > 0 && !keep.has(m) && keep.add(m)) room--
+  const hidden = members.filter((m) => !keep.has(m))
+  return hidden.length < 2 ? { shown: members, hidden: [] } : { shown: members.filter((m) => keep.has(m)), hidden }
+}
+
+/** The "+N more" box at the end of a collapsed group. */
+function moreNode(gid: string, hidden: number, of: number, what: string): DiagramNode {
+  return {
+    id: `more:${gid}`,
+    type: 'more',
+    parent: gid,
+    ...SIZE.member,
+    data: { title: `+${hidden} more`, subtitle: `Show all ${plural(of, what)}`, more: hidden },
+  }
+}
+
 /** Trailing index stripped: `web-03` → `web`. Servers sharing a stem and LANs are grouped. */
 export function stem(name: string) {
   return name.replace(/[-_. ]?\d+$/, '') || name
+}
+
+/**
+ * Which LAN lines of routers are drawn only on demand, by router box. A
+ * router always keeps the line to its first LAN (the one nearest the
+ * internet), and the line to any LAN that nothing else would connect at
+ * rest, so no LAN floats on its own. Routers are taken in order, so of two
+ * routers sharing such a LAN the first draws it. LANs folded into a router
+ * (`foldedLans`) are left out before.
+ */
+function routerLines(routers: Device[], others: Device[], boxOf: Map<string, string>): Map<string, Set<string>> {
+  const connected = new Set(others.flatMap((d) => d.lans.map((l) => l.id)))
+  for (const r of routers) if (r.lans[0]) connected.add(r.lans[0].id)
+  const out = new Map<string, Set<string>>()
+  for (const r of routers) {
+    const box = boxOf.get(r.node.id)!
+    if (out.has(box)) continue // the other members of a router group
+    const later = new Set<string>()
+    for (const l of r.lans.slice(1)) {
+      if (connected.has(l.id)) later.add(l.id)
+      else connected.add(l.id)
+    }
+    out.set(box, later)
+  }
+  return out
+}
+
+/**
+ * LANs that fold into a router box, by LAN: not public, and the router box
+ * is the only thing on them (real routers sit in many such LANs). Without a
+ * Cross Connect the LAN is a stub, shown only as "+N LANs only here" on the
+ * router; with one it is a transit LAN, drawn as the router's line straight
+ * to the Cross Connect. A LAN between two routers connects them and stays.
+ */
+function foldedLans(lans: GraphNode[], devices: Device[], boxOf: (d: Device) => string, isRouter: (d: Device) => boolean) {
+  const on = new Map<string, Set<string>>() // LAN → boxes on it
+  for (const d of devices) for (const l of d.lans) on.set(l.id, (on.get(l.id) ?? new Set()).add(boxOf(d)))
+  const routers = new Set(devices.filter(isRouter).map(boxOf))
+  const out = new Map<string, string>()
+  for (const lan of lans) {
+    const boxes = [...(on.get(lan.id) ?? [])]
+    if (lan.subtype !== 'public' && boxes.length === 1 && routers.has(boxes[0])) out.set(lan.id, boxes[0])
+  }
+  return out
 }
 
 /**
@@ -321,7 +414,8 @@ export function stem(name: string) {
  * resources between them, tiered by distance from the internet; Cross
  * Connects lead to the peer datacenters at the edge of the picture.
  */
-export function datacenterDiagram(model: Model, dcId: string): Diagram {
+export function datacenterDiagram(model: Model, dcId: string, options: DiagramOptions = {}): Diagram {
+  const expanded = options.expanded ?? new Set<string>()
   const dc = model.nodes.get(dcId)
   const nodes: DiagramNode[] = []
   const edges: DiagramEdge[] = []
@@ -333,11 +427,13 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
     edgeIds.add(id)
     edges.push({ ...e, id })
   }
+  const hidden = new Map<string, string>()
   const empty: Diagram = {
     key: `dc:${dcId}`,
     nodes,
     edges,
     anchors,
+    hidden,
     rootLayout: { ...LAYERED, 'elk.padding': '[top=20,left=20,bottom=20,right=20]', 'elk.aspectRatio': '1.6' },
   }
   if (!dc || dc.kind !== 'datacenter') return empty
@@ -398,14 +494,42 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   const hasInternet = lans.some((l) => l.subtype === 'public') || devices.some((d) => edgeDevice(d.node) && d.node.ips.length)
   if (hasInternet) nodes.push({ id: 'internet', type: 'internet', ...SIZE.internet, data: { title: 'Internet' } })
 
-  // LANs; wider when busy so they read like a bus.
+  // Servers with the same name stem and LANs collapse into one group box.
+  const groupKey = (d: Device) =>
+    `${stem(d.node.name)}|${d.lans
+      .map((l) => l.id)
+      .sort()
+      .join(',')}`
+  const groups = new Map<string, Device[]>()
+  for (const d of devices) if (d.node.kind === 'server') groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d])
+  const boxId = (d: Device) => (d.node.kind === 'server' && groups.get(groupKey(d))!.length > 1 ? `grp:${groupKey(d)}` : d.node.id)
+  const isRouter = (d: Device) => d.node.kind === 'server' && d.lans.length >= ROUTER_LANS
+
+  // LANs only a router uses fold into it; the rest are drawn.
   const pccEdges = new Map<string, string[]>() // pcc → LANs of this DC
   for (const lan of lans) {
     for (const e of model.edgesByNode.get(lan.id) ?? []) {
       if (e.kind === 'cross-connect' && e.from === lan.id) pccEdges.set(e.to, [...(pccEdges.get(e.to) ?? []), lan.id])
     }
   }
+  const transit = new Set([...pccEdges.values()].flat())
+  // A router the user unfolded (`lans:<box>` expanded) shows its LANs as boxes again.
+  const foldable = foldedLans(lans, devices, boxId, isRouter)
+  const folded = new Map([...foldable].filter(([, box]) => !expanded.has(`lans:${box}`)))
+  const stubs = new Map<string, string[]>() // router box → names of LANs only it uses
   for (const lan of lans) {
+    const box = foldable.get(lan.id)
+    if (!box || transit.has(lan.id)) continue
+    stubs.set(box, [...(stubs.get(box) ?? []), lan.name])
+    if (folded.has(lan.id)) anchors.set(lan.id, box)
+  }
+  const only = (box: string) =>
+    stubs.has(box) ? { lans: stubs.get(box)!, key: `lans:${box}`, open: expanded.has(`lans:${box}`) || undefined } : undefined
+  const shown = (d: Device) => d.lans.filter((l) => !folded.has(l.id))
+
+  // LANs; wider when busy so they read like a bus.
+  for (const lan of lans) {
+    if (folded.has(lan.id)) continue
     const links = degree(lan.id) + [...pccEdges.values()].filter((l) => l.includes(lan.id)).length + (lan.subtype === 'public' ? 1 : 0)
     nodes.push({
       id: lan.id,
@@ -425,20 +549,35 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
     if (lan.subtype === 'public' && hasInternet) addEdge({ source: 'internet', target: lan.id, kind: 'internet' })
   }
 
-  // Servers with the same name stem and LANs collapse into one group box.
-  const groups = new Map<string, Device[]>()
-  for (const d of devices) {
-    if (d.node.kind !== 'server') continue
-    const key = `${stem(d.node.name)}|${d.lans
-      .map((l) => l.id)
-      .sort()
-      .join(',')}`
-    groups.set(key, [...(groups.get(key) ?? []), d])
+  // What a collapsed group always shows: the selection (a NIC or volume: its
+  // server), network appliances, and what is new or changed in a comparison.
+  const selected = options.selected ? model.nodes.get(options.selected) : undefined
+  const focus =
+    selected?.kind === 'nic'
+      ? selected.parentId
+      : selected?.kind === 'volume'
+        ? ((model.edgesByNode.get(selected.id) ?? []).find((e) => e.kind === 'attached' && e.to === selected.id)?.from ?? selected.id)
+        : selected?.id
+  const pinned = (n: GraphNode) => n.id === focus || !!n.appliance || !!n.change
+  const hiddenIn = new Map<string, string>() // hidden member → its "more" box
+  /** The members of a group as drawn, and its "more" box; hidden members are found on that box. */
+  const collapse = (gid: string, list: GraphNode[], what: string) => {
+    const open = expanded.has(gid)
+    const { shown, hidden } = preview(list, open, pinned)
+    for (const n of hidden) hiddenIn.set(n.id, `more:${gid}`)
+    return {
+      shown: new Set(shown),
+      more: hidden.length ? moreNode(gid, hidden.length, list.length, what) : undefined,
+      collapsible: (open && preview(list, false, pinned).hidden.length > 0) || undefined,
+    }
   }
+
   const boxOf = new Map<string, string>() // device → node carrying its LAN edges
   for (const [key, members] of groups) {
     if (members.length < 2) continue
     const gid = `grp:${key}`
+    const servers = members.map((m) => m.node)
+    const { shown, more, collapsible } = collapse(gid, servers, 'server')
     const types = new Set(members.map((m) => subtypeLabel('server', m.node.subtype)))
     nodes.push({
       id: gid,
@@ -448,9 +587,13 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
         title: stem(members[0].node.name),
         subtitle: [plural(members.length, 'server'), types.size === 1 ? [...types][0] : undefined].filter(Boolean).join(' · '),
         kind: 'server',
+        // Members share their LANs, so a group of routers is one router (an HA pair).
+        lans: isRouter(members[0]) ? members[0].lans.length : undefined,
+        only: only(gid),
+        collapsible,
       },
     })
-    for (const m of members) {
+    for (const m of members.filter((x) => shown.has(x.node))) {
       nodes.push({
         id: m.node.id,
         type: 'member',
@@ -459,19 +602,37 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
         ...SIZE.member,
         data: { ...base(m.node), subtitle: ipLabel(m.node) ?? subtitle(m.node) },
       })
-      boxOf.set(m.node.id, gid)
     }
+    if (more) nodes.push(more)
+    for (const m of members) boxOf.set(m.node.id, gid)
   }
 
   for (const d of devices) {
     const n = d.node
-    if (!boxOf.has(n.id)) {
+    if (boxOf.has(n.id)) continue
+    if (isRouter(d)) {
+      nodes.push({
+        id: n.id,
+        type: 'router',
+        ref: n.id,
+        ...SIZE.router,
+        data: { ...base(n), subtitle: subtitle(n), lans: d.lans.length, only: only(n.id) },
+      })
+    } else {
       nodes.push({ id: n.id, type: 'resource', ref: n.id, ...SIZE.resource, data: { ...base(n), subtitle: subtitle(n) } })
-      boxOf.set(n.id, n.id)
     }
+    boxOf.set(n.id, n.id)
+  }
+
+  const others = devices.filter((d) => !isRouter(d))
+  const routers = devices.filter(isRouter).map((d) => ({ ...d, lans: shown(d) }))
+  const onDemand = routerLines(routers, others, boxOf)
+  const via = new Map<string, Set<string>>() // LAN → routers that reach it only on demand
+  for (const d of devices) {
+    const n = d.node
     const box = boxOf.get(n.id)!
     const grouped = box !== n.id
-    const [first, ...rest] = d.lans
+    const [first, ...rest] = shown(d)
     if (edgeDevice(n)) {
       if (hasInternet && n.ips.length)
         addEdge({ source: 'internet', target: box, kind: 'internet', label: fact(n, 'Public IPs') ?? fact(n, 'Public IP') })
@@ -479,7 +640,15 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
       continue
     }
     if (first) addEdge({ source: first.id, target: box, kind: 'lan', label: grouped ? undefined : first.label })
-    rest.forEach((l) => addEdge({ source: box, target: l.id, kind: 'lan', label: grouped ? undefined : l.label }))
+    for (const l of rest) {
+      const later = onDemand.get(box)?.has(l.id)
+      addEdge({ source: box, target: l.id, kind: 'lan', label: grouped ? undefined : l.label, onDemand: later || undefined })
+      if (later) via.set(l.id, (via.get(l.id) ?? new Set()).add(box))
+    }
+  }
+  for (const [lan, boxes] of via) {
+    const titles = [...boxes].map((r) => nodes.find((x) => x.id === r)!.data.title)
+    nodes.find((x) => x.id === lan)!.data.via = titles.length === 1 ? titles[0] : plural(titles.length, 'router')
   }
 
   // Load balancer targets: drawn only while the balancer or a target is selected.
@@ -491,7 +660,10 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
     }
     for (const t of targets) {
       if (!boxOf.has(t.to)) continue
-      addEdge({ id: `target:${d.node.id}->${t.to}`, source: d.node.id, target: t.to, kind: 'target', label: t.label, onDemand: true })
+      // Targets in a collapsed group: one line to its "more" box.
+      const to = hiddenIn.get(t.to) ?? t.to
+      const label = to === t.to ? t.label : undefined
+      addEdge({ id: `target:${d.node.id}->${to}`, source: d.node.id, target: to, kind: 'target', label, onDemand: true })
     }
   }
 
@@ -526,7 +698,17 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
       },
     })
     anchors.set(pcc.id, hub)
-    for (const lan of pccEdges.get(pcc.id)!) addEdge({ source: lan, target: hub, kind: 'cross-connect' })
+    for (const lan of pccEdges.get(pcc.id)!) {
+      const router = folded.get(lan)
+      if (!router) {
+        addEdge({ source: lan, target: hub, kind: 'cross-connect' })
+        continue
+      }
+      // A transit LAN: the router's line goes straight to the Cross Connect, named after the LAN.
+      const id = `${lan}->${hub}`
+      addEdge({ id, source: router, target: hub, kind: 'cross-connect', label: model.nodes.get(lan)!.name, ref: lan })
+      if (!anchors.has(lan)) anchors.set(lan, id)
+    }
     const peerDcs = [...peers.keys()]
       .map((id) => model.nodes.get(id))
       .filter((n): n is GraphNode => !!n)
@@ -557,21 +739,29 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   for (const [title, list] of leftovers) {
     if (!list.length) continue
     const gid = `grp:${title}`
-    nodes.push({ id: gid, type: 'group', layout: PACKED, data: { title, subtitle: plural(list.length, 'resource') } })
-    for (const n of list) {
+    const { shown, more, collapsible } = collapse(gid, list, 'resource')
+    nodes.push({ id: gid, type: 'group', layout: PACKED, data: { title, subtitle: plural(list.length, 'resource'), collapsible } })
+    for (const n of list.filter((x) => shown.has(x))) {
       nodes.push({ id: n.id, type: 'member', parent: gid, ref: n.id, ...SIZE.member, data: { ...base(n), subtitle: subtitle(n) } })
-      boxOf.set(n.id, n.id)
     }
+    if (more) nodes.push(more)
+    for (const n of list) boxOf.set(n.id, n.id)
   }
 
-  // Map every resource of the datacenter to the box that shows it.
-  for (const id of boxOf.keys()) anchors.set(id, id)
+  // Map every resource of the datacenter to the box that shows it; a member
+  // hidden in a collapsed group to its "more" box.
+  for (const id of boxOf.keys()) anchors.set(id, hiddenIn.get(id) ?? id)
   const serverOf = new Map<string, string>()
   for (const e of model.edges) if (e.kind === 'attached' && boxOf.has(e.from)) serverOf.set(e.to, e.from)
   for (const n of model.nodes.values()) {
     if (anchors.has(n.id) || n.dcId !== dcId) continue
     const host = n.kind === 'nic' || n.kind === 'vpntunnel' ? n.parentId : serverOf.get(n.id)
     if (host && anchors.has(host)) anchors.set(n.id, anchors.get(host)!)
+  }
+  // What a "more" box stands for, by member, so search hits count members.
+  for (const [id, a] of anchors) {
+    const member = hiddenIn.has(id) ? id : [model.nodes.get(id)?.parentId, serverOf.get(id)].find((h) => h && hiddenIn.has(h))
+    if (member && hiddenIn.get(member) === a) hidden.set(id, member)
   }
   for (const k8s of nodesOf(model, 'k8s')) {
     const pool = (model.children.get(k8s.id) ?? []).find((id) => anchors.has(id))
@@ -580,7 +770,8 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
 
   // VPN tunnels and manual links. The far end sits above the local one: a
   // peer datacenter node, or an endpoint outside the contract.
-  const local = (n: GraphNode) => (n.dcId === dcId && n.kind !== 'datacenter' ? anchors.get(n.id) : undefined)
+  // A folded LAN's line starts at its router (a transit LAN's anchor is a line).
+  const local = (n: GraphNode) => (n.dcId === dcId && n.kind !== 'datacenter' ? (folded.get(n.id) ?? anchors.get(n.id)) : undefined)
   const remote = (n: GraphNode) => {
     if (n.kind === 'external') {
       const id = `x:${n.id}`

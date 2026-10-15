@@ -1,5 +1,6 @@
 import type { Edge, Node } from '@xyflow/react'
 import { createContext } from 'react'
+import { absolutePositions } from './layout'
 import type { Diagram, DiagramEdgeKind, DiagramNode, Layout, Point } from './types'
 
 export type FlowNodeData = {
@@ -23,7 +24,16 @@ export type FlowEdgeData = {
 export type FlowNode = Node<FlowNodeData>
 export type FlowEdge = Edge<FlowEdgeData>
 
-export const DiagramActions = createContext<{ openDc: (dcId: string) => void }>({ openDc: () => {} })
+export const DiagramActions = createContext<{
+  openDc: (dcId: string) => void
+  select: (id: string) => void
+  /** Expands or collapses a box: a large group, or a router's folded LANs (`only.key`). */
+  setOpen: (key: string, open: boolean) => void
+}>({
+  openDc: () => {},
+  select: () => {},
+  setOpen: () => {},
+})
 
 /** Lines that are hard to tell apart without their name. */
 const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
@@ -42,17 +52,29 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
   }
 
   const hits = new Map<string, number>()
+  const hiddenHits = new Map<string, Set<string>>() // "more" box → hidden members with a hit
   if (matches) {
     for (const id of matches) {
       const a = diagram.anchors.get(id)
       if (!a || !byId.has(a)) continue
       for (let n = byId.get(a); n; n = n.parent ? byId.get(n.parent) : undefined) hits.set(n.id, (hits.get(n.id) ?? 0) + 1)
+      const member = diagram.hidden?.get(id)
+      if (member) hiddenHits.set(a, (hiddenHits.get(a) ?? new Set()).add(member))
     }
   }
   const lit = (id: string) => !matches || (hits.get(id) ?? 0) > 0
 
+  // Unrouted edges to a box above (a router's LAN nearer the internet) leave
+  // from the top instead of looping round from the bottom.
+  const abs = absolutePositions(layout)
+  const upwards = (source: string, target: string) => {
+    const [s, t] = [abs.get(source), abs.get(target)]
+    return !!s && !!t && t.y + t.height <= s.y
+  }
+
   const related = new Set<string>()
   const edges: FlowEdge[] = layout.edges.map((e) => {
+    const up = !e.points && upwards(e.source, e.target)
     const touches = boxes.has(e.source) || boxes.has(e.target)
     const hl = touches || e.id === selectedEdge
     const hidden = e.onDemand && !touches
@@ -61,6 +83,8 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
       id: e.id,
       source: e.source,
       target: e.target,
+      sourceHandle: up ? 'top-out' : 'bottom',
+      targetHandle: up ? 'bottom-in' : 'top',
       type: 'routed',
       hidden,
       selectable: !!e.ref,
@@ -90,7 +114,8 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
     draggable: false,
     data: {
       node: n,
-      matches: n.type === 'group' ? 0 : (matches && hits.get(n.id)) || 0,
+      // A "more" box counts the members it hides that match, not their NICs and volumes as well.
+      matches: n.type === 'group' ? 0 : n.type === 'more' ? (hiddenHits.get(n.id)?.size ?? 0) : (matches && hits.get(n.id)) || 0,
       dim: !lit(n.id),
       related: related.has(n.id) && n.id !== selectedNode,
     },

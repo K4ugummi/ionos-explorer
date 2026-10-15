@@ -44,13 +44,13 @@ describe('comparing the demo with its state two weeks earlier', async () => {
         .filter((c) => c.type === 'added')
         .map((c) => c.node.kind)
         .sort(),
-    ).toEqual(['nic', 'nic', 'nic', 'nic', 'server', 'volume'])
+    ).toEqual([...Array(7).fill('nic'), 'server', 'volume'])
   })
 
   it('reports nothing for an identical snapshot, and counts per datacenter', () => {
     expect(compareModels(newer, newer).changes).toEqual([])
     const core = [...newer.nodes.values()].find((n) => n.name === 'fra-prod-core')!
-    expect(countsByDc(diff).get(core.id)).toMatchObject({ added: 6, removed: expect.any(Number), changed: expect.any(Number) })
+    expect(countsByDc(diff).get(core.id)).toMatchObject({ added: 9, removed: expect.any(Number), changed: expect.any(Number) })
     expect(diff.counts.added + diff.counts.removed + diff.counts.changed).toBe(diff.changes.length)
   })
 })

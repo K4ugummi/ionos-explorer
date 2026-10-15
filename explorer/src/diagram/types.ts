@@ -12,7 +12,9 @@ export type DiagramNodeType =
   | 'peer' // another datacenter, reached through a Cross Connect
   | 'lan'
   | 'resource' // server, load balancer, NAT gateway, managed service
+  | 'router' // server in many LANs; most of its LAN lines are drawn on selection
   | 'member' // compact resource inside a group
+  | 'more' // "+N more": the members a collapsed group does not show; a click expands it
   | 'internet'
   | 'external' // outside the contract: VPN remote host or a site the user added
 
@@ -33,6 +35,19 @@ export interface NodeData {
   change?: 'added' | 'changed'
   /** Datacenter cards when comparing: "+2 ~5 −1". */
   changes?: string
+  /** Routers and router groups: the number of LANs they sit on. */
+  lans?: number
+  /** LANs: the router(s) whose line to this LAN is drawn only on selection ("fw-01", "2 routers"). */
+  via?: string
+  /**
+   * Routers: the LANs nothing else uses, folded into the box. `key` goes into
+   * the expanded set to show them as boxes again (`open`).
+   */
+  only?: { lans: string[]; key: string; open?: boolean }
+  /** Large groups shown in full: offer to collapse them again. */
+  collapsible?: boolean
+  /** "+N more" boxes: how many members they stand for. */
+  more?: number
 }
 
 export interface DiagramNode {
@@ -70,6 +85,8 @@ export interface Diagram {
   edges: DiagramEdge[]
   /** Model node id → id of the diagram node or edge that shows it. */
   anchors: Map<string, string>
+  /** Model nodes in a collapsed group's "more" box (members, their NICs and volumes) → the member. */
+  hidden?: Map<string, string>
   rootLayout: Record<string, string>
 }
 

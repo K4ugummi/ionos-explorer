@@ -721,16 +721,22 @@ button.pill {
 }
 
 .dg-bar {
+  /* Above the canvas and the drawer, so the legend popover can hang over them.
+     It ends where a side drawer starts (margin set inline), so it covers neither. */
+  position: relative;
+  z-index: 11;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 20px;
+  gap: 20px;
+  min-height: 34px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   padding: 6px 14px;
 }
 
 .dg-bar .crumbs {
+  flex: 0 1 auto;
+  min-width: 0;
   margin: 0;
   align-items: center;
   gap: 6px;
@@ -741,12 +747,20 @@ button.pill {
   color: var(--fg);
 }
 
+/* The room right of the breadcrumbs; the legend shows inline only if it fits on one line. */
+.dg-legend-slot {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
 .dg-legend {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
   gap: 2px 12px;
   font-size: 11.5px;
   color: var(--muted);
@@ -756,6 +770,46 @@ button.pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
+}
+
+/* An invisible copy that gives the legend's one-line width. */
+.dg-legend-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.dg-legend-toggle {
+  margin-left: auto;
+}
+
+.dg-legend-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  flex-direction: column;
+  gap: 7px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.dg-legend-pop li {
+  white-space: normal;
+}
+
+.dg-legend svg {
+  flex-shrink: 0;
 }
 
 .dg-legend-hint {
@@ -977,6 +1031,63 @@ button.pill {
   text-align: right;
 }
 
+/* A LAN some router reaches only on selection */
+.dg-via {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  border: 1px dashed var(--faint);
+}
+
+/* router: a server in many LANs, most lines drawn on selection */
+.dg-router {
+  border-bottom: 3px solid var(--k-network);
+}
+
+.dg-lans {
+  color: var(--k-network);
+  font-weight: 600;
+}
+
+.dg-only {
+  font: inherit;
+  font-size: 12px;
+  color: var(--k-network);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.dg-only:hover {
+  text-decoration-style: solid;
+}
+
+.dg-group-label .dg-only {
+  flex: none;
+}
+
+.dg-group-label .dg-lans {
+  flex: none;
+  font-size: 12px;
+}
+
+.dg-group.dg-group-router {
+  border-bottom-style: solid;
+  border-bottom-width: 3px;
+  border-bottom-color: var(--k-network);
+}
+
 /* Cross Connect hub */
 .dg-hub {
   border-radius: 999px;
@@ -1007,6 +1118,54 @@ button.pill {
   margin-top: 0;
   font-family: var(--mono);
   font-size: 11px;
+}
+
+/* "+N more": the members a collapsed group does not show */
+.dg-more {
+  padding: 0;
+  border-style: dashed;
+  background: var(--surface-2);
+}
+
+.dg-more:hover {
+  border-color: var(--accent);
+}
+
+.dg-more-btn {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.dg-more-btn .t {
+  font-weight: 600;
+}
+
+.dg-collapse {
+  flex: none;
+  margin-left: auto;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  padding: 0 8px;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dg-collapse:hover {
+  border-color: var(--accent);
 }
 
 .dg-internet {
@@ -1154,7 +1313,9 @@ button.pill {
 
 .react-flow__minimap .mm-dc,
 .react-flow__minimap .mm-resource,
+.react-flow__minimap .mm-router,
 .react-flow__minimap .mm-member,
+.react-flow__minimap .mm-more,
 .react-flow__minimap .mm-peer {
   fill: var(--surface-2);
   stroke: var(--faint);

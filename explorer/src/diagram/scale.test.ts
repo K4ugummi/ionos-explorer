@@ -50,9 +50,15 @@ it('lays out large contracts', async () => {
   expect(width / height).toBeGreaterThan(0.5)
   expect(width / height).toBeLessThan(4)
 
-  // 400 servers on the same LANs collapse into two packed groups.
+  // 400 servers on the same LANs collapse into two packed groups, each
+  // showing 6 of them and a "+194 more" box until it is expanded.
   const big = await layoutDiagram(datacenterDiagram(model, 'dc0'), elk)
   const groups = big.nodes.filter((n) => n.type === 'group')
   expect(groups.map((g) => g.data.subtitle)).toEqual(['200 servers', '200 servers'])
-  for (const g of groups) expect(g.width / g.height).toBeLessThan(4)
+  for (const g of groups)
+    expect(big.nodes.filter((n) => n.parent === g.id).map((n) => n.type)).toEqual([...Array(6).fill('member'), 'more'])
+  const open = await layoutDiagram(datacenterDiagram(model, 'dc0', { expanded: new Set(groups.map((g) => g.id)) }), elk)
+  const full = open.nodes.filter((n) => n.type === 'group')
+  for (const g of full) expect(open.nodes.filter((n) => n.parent === g.id)).toHaveLength(200)
+  for (const g of full) expect(g.width / g.height).toBeLessThan(4)
 }, 60000)
