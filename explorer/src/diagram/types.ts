@@ -1,8 +1,8 @@
 import type { NodeKind } from '../model/types'
 
 /**
- * A diagram is derived from the model for one view (the whole contract or a
- * single datacenter). It is pure data: sizes are fixed per node type so the
+ * A diagram is derived from the model for one view (the whole contract, a
+ * single datacenter, or the neighbourhood of a resource or paths between two). It is pure data: sizes are fixed per node type so the
  * layout can run before anything is rendered.
  */
 export type DiagramNodeType =
@@ -48,6 +48,8 @@ export interface NodeData {
   collapsible?: boolean
   /** "+N more" boxes: how many members they stand for. */
   more?: number
+  /** Focus and path views: the resource the view is about (the start and end of a path). */
+  focus?: boolean
 }
 
 export interface DiagramNode {
@@ -94,6 +96,12 @@ export interface Diagram {
    * routes those lines too. Without it, lines across groups are drawn freely.
    */
   linkedLayout?: Record<string, string>
+  /**
+   * Edges point the way the picture reads (a path, start to end), so the
+   * linked layout keeps them as they are instead of pointing lines between
+   * groups from the earlier group to the later one.
+   */
+  directed?: boolean
 }
 
 export interface Point {
@@ -112,6 +120,8 @@ export interface PlacedNode extends DiagramNode {
 export interface PlacedEdge extends DiagramEdge {
   /** Absolute route from the layout; absent for edges drawn freely. */
   points?: Point[]
+  /** The user moved one of its ends away from the other, so its route was dropped (`applyPositions`). */
+  moved?: boolean
 }
 
 export interface Layout {

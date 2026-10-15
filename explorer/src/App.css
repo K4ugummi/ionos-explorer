@@ -720,13 +720,15 @@ button.pill {
   pointer-events: none;
 }
 
-/* A selection that a hidden layer keeps off the canvas; right set inline (the drawer). */
+/* Notes at the top of the canvas (a selection a hidden layer or a focus view leaves out, no route); right set inline (the drawer). */
 .dg-hint-row {
   position: absolute;
   top: 10px;
   left: 12px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   pointer-events: none;
   z-index: 5;
 }
@@ -795,16 +797,48 @@ button.pill {
   flex: none;
 }
 
+/* Focus and path views: closes the view, back to the one below. */
+.dg-bar .crumbs .dg-mode-close {
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.dg-bar .crumbs .dg-mode-close:hover {
+  color: var(--fg);
+}
+
+.dg-hops {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.dg-hops .seg button {
+  flex: none;
+  min-width: 28px;
+  padding: 2px 8px;
+}
+
 @media (max-width: 520px) {
   .dg-bar {
     gap: 12px;
+  }
+
+  .dg-hops-label,
+  .dg-bar .crumbs .dg-crumb-up {
+    display: none;
   }
 
   .dg-bar .crumbs .pill {
     display: none;
   }
 
-  .dg-bar .dg-layers {
+  .dg-bar .dg-layers,
+  .dg-bar .dg-reset {
     margin-left: 0;
   }
 }
@@ -896,6 +930,12 @@ button.pill {
 /* "Layers": what the diagram shows and emphasises */
 .dg-layers {
   position: relative;
+  flex: none;
+  margin-left: -8px;
+}
+
+/* "Reset layout": only while the view has boxes the user moved */
+.dg-reset {
   flex: none;
   margin-left: -8px;
 }
@@ -1034,6 +1074,12 @@ button.pill {
   opacity: 0.3;
 }
 
+/* Focus and path views: the resource the view is about, and a path's two ends. */
+.dg-node.focus {
+  outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 3px;
+}
+
 .dg-node.placeholder {
   border-style: dashed;
 }
@@ -1058,6 +1104,15 @@ button.pill {
   border-radius: 10px;
   padding: 0;
   cursor: default;
+}
+
+/* Own positions: groups can be dragged by their empty space; while dragging, the cursor says so. */
+.react-flow__node.draggable > .dg-group {
+  cursor: grab;
+}
+
+.react-flow__node.dragging > .dg-node {
+  cursor: grabbing;
 }
 
 .dg-group.dg-group-servers {
@@ -2168,4 +2223,110 @@ button.change-head:hover .name {
   gap: 12px;
   max-width: 640px;
   margin-bottom: 12px;
+}
+
+/* --- focus and path views ----------------------------------------------------- */
+
+.detail-actions {
+  margin: -6px 0 14px;
+}
+
+.path-pick {
+  margin-bottom: 16px;
+}
+
+.drawer-back {
+  margin-bottom: 10px;
+}
+
+.path-ends {
+  margin: 4px 0 10px;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+.path-ends button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.path-panel > .hint {
+  font-size: 12.5px;
+  margin: 0 0 12px;
+}
+
+.path-route h2,
+.path-none h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.path-route h2 .pill {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+.path-none p {
+  margin: 10px 12px;
+  font-size: 13px;
+}
+
+.path-none .row {
+  margin: 0 12px 12px;
+}
+
+.path-steps {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 8px;
+}
+
+.path-steps li button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.path-steps li button:hover {
+  background: var(--accent-soft);
+}
+
+.path-steps li button > span:not(.kind) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-steps .ctx {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The step between two resources: a line down the left, the words next to it. */
+.path-step {
+  margin: 0 0 0 18px;
+  padding: 2px 0 4px 16px;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
 }

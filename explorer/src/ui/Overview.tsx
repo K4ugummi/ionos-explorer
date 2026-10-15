@@ -1,5 +1,5 @@
 import { useContext, useMemo, useRef, useState } from 'react'
-import { isEmpty, merge, parse, removeIpFix, removeLink, serialize, setIpFix } from '../annotations/annotations'
+import { isEmpty, merge, parse, removeIpFix, removeLink, resetPositions, serialize, setIpFix } from '../annotations/annotations'
 import { parseIpList, type ParsedLine } from '../annotations/ipList'
 import { AnnotationsContext } from '../annotations/context'
 import { KINDS, SERVER_TYPES } from '../model/kinds'
@@ -123,6 +123,9 @@ export function Overview({ model, onSelect, onSearch }: { model: Model; onSelect
   )
 }
 
+const movedBoxes = (boxes: number, views: number) =>
+  `${boxes === 1 ? '1 box' : `${boxes} boxes`} moved in ${views === 1 ? '1 diagram' : `${views} diagrams`}.`
+
 const CONFIDENCE = { high: 'certain', medium: 'likely', low: 'possible' } as const
 
 /** Manual links, sites and IP corrections: listing, export and import. */
@@ -153,7 +156,7 @@ function AnnotationsSection({ model, onSelect }: { model: Model; onSelect: (id: 
       const { annotations: incoming, contract: theirs } = parse(await f.text())
       ctx.update((a) => merge(a, incoming))
       setMessage(
-        `Imported ${incoming.links.length} links, ${incoming.sites.length} sites and ${incoming.ips.length} IP corrections.` +
+        `Imported ${incoming.links.length} links, ${incoming.sites.length} sites, ${incoming.ips.length} IP corrections and ${incoming.positions.length} box positions.` +
           (theirs && contract && theirs !== contract ? ` The file was made for contract ${theirs}, this is ${contract}.` : ''),
       )
     } catch (e) {
@@ -165,8 +168,9 @@ function AnnotationsSection({ model, onSelect }: { model: Model; onSelect: (id: 
     <section className="location">
       <h2>Your annotations</h2>
       <p className="hint">
-        What you know and the API does not: links inside appliances, other sites, other clouds, and IPs changed inside VMs. Kept in this
-        browser, separate from the snapshot. Add them from a resource’s details, or paste IP corrections below.
+        What you know and the API does not: links inside appliances, other sites, other clouds, and IPs changed inside VMs; and where you
+        placed boxes in the diagram. Kept in this browser, separate from the snapshot. Add them from a resource’s details, or paste IP
+        corrections below.
       </p>
       <div className="section">
         <h3 className="sub">Manual links</h3>
@@ -236,6 +240,20 @@ function AnnotationsSection({ model, onSelect }: { model: Model; onSelect: (id: 
           </div>
         )}
         <PasteIps model={model} />
+        <h3 className="sub">Box positions</h3>
+        {annotations.positions.length > 0 ? (
+          <div className="row" style={{ padding: 8 }}>
+            <span className="hint">
+              {movedBoxes(annotations.positions.length, new Set(annotations.positions.map((p) => p.view)).size)} Each view has a “Reset
+              layout” button.
+            </span>
+            <button className="btn small" onClick={() => ctx.update((a) => resetPositions(a))}>
+              Reset all
+            </button>
+          </div>
+        ) : (
+          <div className="empty">No boxes moved yet. Drag a box in the diagram to place it yourself.</div>
+        )}
         <div className="row" style={{ padding: 8, borderTop: '1px solid var(--border)' }}>
           <button className="btn small" onClick={exportFile} disabled={isEmpty(annotations)}>
             Export annotations file

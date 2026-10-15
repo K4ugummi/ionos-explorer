@@ -66,6 +66,7 @@ describe('layoutSignature', () => {
       edit((d) => d.nodes.reverse()),
       edit((d) => (d.key = 'dc:y')),
       edit((d) => (d.linkedLayout = { 'elk.algorithm': 'layered' })),
+      edit((d) => (d.directed = true)),
     ]
     for (const d of changed) expect(layoutSignature(d)).not.toBe(base)
     expect(new Set(changed.map(layoutSignature)).size).toBe(changed.length)
@@ -130,6 +131,46 @@ describe('linked boxes', () => {
       const [c, p] = [abs.get(n.id)!, abs.get(n.parent!)!]
       expect(c.x >= p.x && c.y >= p.y && c.x + c.width <= p.x + p.width && c.y + c.height <= p.y + p.height, n.id).toBe(true)
     }
+  })
+
+  it('also joins two top-level boxes a line links, since the root routes nothing', async () => {
+    const d = linked()
+    d.nodes.push({ id: 'peer', type: 'peer', width: 220, height: 52, data: { title: 'peer' } })
+    d.edges.push({ id: 'out-peer', source: 'out', target: 'peer', kind: 'peer' })
+    expect(linkedBoxes(d).cluster.get('peer')).toBe(linkedBoxes(d).cluster.get('out'))
+    const l = await layoutDiagram(d, new ELK())
+    expect(l.edges.find((e) => e.id === 'out-peer')!.points!.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('keeps the own algorithm of a group no line enters (lines end at its box)', async () => {
+    const d = linked()
+    d.nodes.push(
+      { id: 'farm', type: 'group', parent: 'g', layout: { 'elk.algorithm': 'rectpacking' }, data: { title: 'farm' } },
+      ...[1, 2, 3, 4].map((i) => ({
+        id: `f${i}`,
+        type: 'member' as const,
+        parent: 'farm',
+        width: 196,
+        height: 42,
+        data: { title: `f${i}` },
+      })),
+    )
+    d.edges.push({ id: 'lan-farm', source: 'lan', target: 'farm', kind: 'lan' })
+    const l = await layoutDiagram(d, new ELK())
+    // Packed in rows, not laid out as one layer of a layered graph.
+    expect(new Set(l.nodes.filter((n) => n.parent === 'farm').map((n) => n.y)).size).toBeGreaterThan(1)
+    expect(l.edges.find((e) => e.id === 'lan-farm')!.points).toBeDefined()
+  })
+
+  it('keeps the direction of lines in a directed diagram', async () => {
+    const order = async (directed: boolean) => {
+      const l = await layoutDiagram({ ...linked(), directed }, new ELK())
+      const abs = absolutePositions(l)
+      return abs.get('h')!.y < abs.get('g')!.y ? 'h first' : 'g first'
+    }
+    // c-a points from h to g: turned round, g (earlier in the diagram) comes first; kept, h does.
+    expect(await order(false)).toBe('g first')
+    expect(await order(true)).toBe('h first')
   })
 })
 

@@ -1,4 +1,13 @@
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, Handle, Position, type EdgeProps, type NodeProps } from '@xyflow/react'
+import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  getSmoothStepPath,
+  Handle,
+  Position,
+  type EdgeProps,
+  type NodeProps,
+} from '@xyflow/react'
 import { useContext } from 'react'
 import { KindBadge } from '../ui/common'
 import { DiagramActions, type FlowEdge, type FlowNode, type FlowNodeData } from './flow'
@@ -8,7 +17,8 @@ import type { Point } from './types'
 /**
  * Edges are routed by the layout; handles only anchor the unrouted ones:
  * down from the bottom into the top, or, to a box above, up from the top
- * into its bottom (`toFlow` picks them).
+ * into its bottom; lines whose route was dropped because a box was moved
+ * also left and right (`handles` in flow.ts picks them).
  */
 function Handles() {
   return (
@@ -17,6 +27,10 @@ function Handles() {
       <Handle type="source" id="bottom" position={Position.Bottom} isConnectable={false} className="dg-handle" />
       <Handle type="source" id="top-out" position={Position.Top} isConnectable={false} className="dg-handle" />
       <Handle type="target" id="bottom-in" position={Position.Bottom} isConnectable={false} className="dg-handle" />
+      <Handle type="source" id="right-out" position={Position.Right} isConnectable={false} className="dg-handle" />
+      <Handle type="target" id="left-in" position={Position.Left} isConnectable={false} className="dg-handle" />
+      <Handle type="source" id="left-out" position={Position.Left} isConnectable={false} className="dg-handle" />
+      <Handle type="target" id="right-in" position={Position.Right} isConnectable={false} className="dg-handle" />
     </>
   )
 }
@@ -29,7 +43,9 @@ function classes(d: FlowNodeData, selected: boolean, extra = '') {
     selected && 'selected',
     d.related && 'related',
     // Keeps its full detail at every zoom (see lod.ts).
-    (selected || d.related || d.matches > 0) && 'full',
+    (selected || d.related || d.matches > 0 || d.node.data.focus) && 'full',
+    // What a focus or path view is about.
+    d.node.data.focus && 'focus',
     d.dim && 'dim',
     d.matches > 0 && 'match',
     d.node.data.inactive && 'inactive',
@@ -266,6 +282,11 @@ export function RoutedEdge(props: EdgeProps<FlowEdge>) {
   if (data?.points && data.points.length > 1) {
     path = roundedPath(data.points)
     label = midpoint(data.points)
+  } else if (data?.moved) {
+    // An end was moved: right-angled like the routed lines, between the sides that face each other.
+    const [p, x, y] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 8 })
+    path = p
+    label = { x, y }
   } else {
     const [p, x, y] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
     path = p

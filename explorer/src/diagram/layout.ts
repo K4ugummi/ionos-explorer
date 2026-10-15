@@ -27,10 +27,14 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
     }
     elkNodes.set(c, { id: c, layoutOptions, children: [], edges: [] })
   }
+  const entered = enteredGroups(diagram)
   for (const n of diagram.nodes) {
     // A group in a linked box is part of its graph: same algorithm, own padding.
+    // One no routed line enters (a packed server group, lines end at its box)
+    // keeps its own algorithm; ELK lays it out on its own first.
     const padding = n.layout?.['elk.padding']
-    const options = cluster.has(top(n.id)) ? { ...diagram.linkedLayout, ...(padding ? { 'elk.padding': padding } : {}) } : (n.layout ?? {})
+    const linked = cluster.has(top(n.id)) && (n.type !== 'group' || entered.has(n.id))
+    const options = linked ? { ...diagram.linkedLayout, ...(padding ? { 'elk.padding': padding } : {}) } : (n.layout ?? {})
     // ELK's JSON importer chokes on keys that are present but undefined.
     elkNodes.set(
       n.id,
@@ -52,13 +56,14 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
   const flipped = new Set<string>()
   for (const e of routedEdges(diagram)) {
     const p = parentOf.get(e.source)
-    if (p === parentOf.get(e.target)) {
+    // Two top-level boxes a line joins are in one linked box (the root routes nothing).
+    if (p === parentOf.get(e.target) && !(p === root.id && cluster.has(e.source))) {
       elkNodes.get(p!)!.edges!.push({ id: e.id, sources: [e.source], targets: [e.target] })
     } else {
       // Lines between groups have no direction worth keeping; pointing them all
       // from the earlier group to the later one lets ELK put the groups in that
       // order instead of looping lines that point back round both groups.
-      const flip = order.get(top(e.source))! > order.get(top(e.target))!
+      const flip = !diagram.directed && order.get(top(e.source))! > order.get(top(e.target))!
       if (flip) flipped.add(e.id)
       const [a, b] = flip ? [e.target, e.source] : [e.source, e.target]
       elkNodes.get(cluster.get(top(e.source))!)!.edges!.push({ id: e.id, sources: [a], targets: [b] })
@@ -107,7 +112,7 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
 
 /**
  * With `linkedLayout`: the top-level boxes that routed edges across group
- * borders join, each mapped to the id of its linked box (boxes joined by
+ * borders (or between two top-level boxes) join, each mapped to the id of its linked box (boxes joined by
  * such edges, directly or through others, share one). `top` gives the
  * top-level box a node sits in.
  */
@@ -124,7 +129,7 @@ export function linkedBoxes(diagram: Diagram) {
     const p = joined.get(id) ?? id
     return p === id ? id : find(p)
   }
-  const across = routedEdges(diagram).filter((e) => parentOf.get(e.source) !== parentOf.get(e.target))
+  const across = routedEdges(diagram).filter((e) => parentOf.get(e.source) !== parentOf.get(e.target) || !parentOf.get(e.source))
   for (const e of across) {
     const [a, b] = [find(top(e.source)), find(top(e.target))]
     if (a !== b) joined.set(b, a)
@@ -133,7 +138,17 @@ export function linkedBoxes(diagram: Diagram) {
   return { top, cluster }
 }
 
-/** Absolute position of every node (layout positions are relative to the parent). */
+/** Groups that a routed edge enters: one of its ends lies inside the group. */
+function enteredGroups(diagram: Diagram) {
+  const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent]))
+  const out = new Set<string>()
+  for (const e of routedEdges(diagram)) {
+    for (const end of [e.source, e.target]) for (let p = parentOf.get(end); p && !out.has(p); p = parentOf.get(p)) out.add(p)
+  }
+  return out
+}
+
+/** Absolute position of every node/** Absolute position of every node (layout positions are relative to the parent). */
 export function absolutePositions(layout: Layout): Map<string, Point & { width: number; height: number }> {
   const out = new Map<string, Point & { width: number; height: number }>()
   for (const n of layout.nodes) {
@@ -170,6 +185,7 @@ export function layoutSignature(diagram: Diagram): string {
     diagram.key,
     diagram.rootLayout,
     diagram.linkedLayout ?? null,
+    !!diagram.directed,
     diagram.nodes.map((n) => [n.id, n.type, n.parent ?? '', n.width ?? -1, n.height ?? -1, n.layout ?? null]),
     routedEdges(diagram).map((e) => [e.id, e.source, e.target]),
   ])

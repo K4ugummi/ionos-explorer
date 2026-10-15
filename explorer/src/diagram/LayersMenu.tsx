@@ -8,6 +8,13 @@ const EMPHASES: { id?: Emphasis; label: string }[] = [
   { id: 'changes', label: 'Only changes' },
 ]
 
+/** Why layers are greyed out. */
+const NOTE = {
+  contract: "Only in a datacenter's diagram.",
+  path: 'A path shows everything it passes.',
+  datacenter: '',
+}
+
 /**
  * The "Layers" button in the diagram bar and its popover: which kinds of
  * things the diagram shows, and what it emphasises. Layers that do not apply
@@ -16,12 +23,13 @@ const EMPHASES: { id?: Emphasis; label: string }[] = [
 export function LayersMenu({
   layers,
   onChange,
-  datacenter,
+  scope,
   comparing,
 }: {
   layers: Layers
   onChange: (next: Layers) => void
-  datacenter: boolean
+  /** Which layers apply: all in a datacenter (and a focus) view, links on the contract view, none on a path. */
+  scope: 'contract' | 'datacenter' | 'path'
   comparing: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -63,9 +71,9 @@ export function LayersMenu({
           <fieldset>
             <legend>Show</legend>
             {LAYERS.map((l) => {
-              const applies = datacenter || !!l.contract
+              const applies = scope === 'datacenter' || (scope === 'contract' && !!l.contract)
               return (
-                <label key={l.id} title={applies ? l.title : `${l.title}. Only in a datacenter's diagram.`}>
+                <label key={l.id} title={applies ? l.title : `${l.title}. ${NOTE[scope]}`}>
                   <input
                     type="checkbox"
                     checked={!layers.hidden.has(l.id)}
@@ -76,7 +84,7 @@ export function LayersMenu({
                 </label>
               )
             })}
-            {!datacenter && <p className="dg-layers-note">Greyed out: only in a datacenter's diagram.</p>}
+            {scope !== 'datacenter' && <p className="dg-layers-note">Greyed out: {NOTE[scope].toLowerCase()}</p>}
           </fieldset>
           <fieldset>
             <legend>Emphasise</legend>

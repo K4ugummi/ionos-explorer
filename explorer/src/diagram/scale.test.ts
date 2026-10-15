@@ -2,7 +2,9 @@ import ELK from 'elkjs/lib/elk.bundled.js'
 import { expect, it } from 'vitest'
 import type { GraphEdge, GraphNode, Model } from '../model/types'
 import { contractDiagram, datacenterDiagram } from './build'
+import { toFlow } from './flow'
 import { layoutDiagram } from './layout'
+import { applyPositions, movable } from './positions'
 
 // A synthetic contract far larger than the demo: 240 datacenters in eight
 // locations, 60 Cross Connects, and one datacenter with 400 servers. With
@@ -83,4 +85,21 @@ it('routes lines between locations in large contracts', async () => {
   expect(across.length).toBeGreaterThanOrEqual(40)
   for (const e of across) expect(e.points?.length, e.id).toBeGreaterThanOrEqual(2)
   expect(ms).toBeLessThan(20000)
+}, 60000)
+
+it('follows a dragged box in large contracts without delay', async () => {
+  // Every pointer move during a drag applies the offsets and rebuilds the React Flow elements.
+  const d = contractDiagram(largeModel(40))
+  const l = await layoutDiagram(d, new ELK())
+  const can = movable(l.nodes)
+  const card = l.nodes.find((n) => n.type === 'dc' && n.parent)!
+  const times: number[] = []
+  for (let i = 1; i <= 30; i++) {
+    const t = performance.now()
+    const placed = applyPositions(l, new Map([[card.id, { dx: i * 7, dy: i * 3 }]]))
+    toFlow(placed, d, undefined, null, null, can)
+    times.push(performance.now() - t)
+  }
+  times.sort((a, b) => a - b)
+  expect(times[15]).toBeLessThan(50)
 }, 60000)

@@ -1,24 +1,31 @@
-import { useContext, useMemo, useState } from 'react'
+import { useCallback, useContext, useMemo, useState } from 'react'
 import { CompareContext } from '../diff/context'
 import { KINDS, subtypeLabel } from '../model/kinds'
+import { networkNode } from '../model/paths'
 import { breadcrumb, related } from '../model/related'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import { KindBadge, NodeList } from './common'
 import { ChangeFields } from './Changes'
 import { IpAddresses } from './IpAddresses'
-import { ManualLinks } from './ManualLinks'
+import { ManualLinks, ResourcePicker } from './ManualLinks'
 
 export function DetailPanel({
   model,
   node,
   onSelect,
   action,
+  onFocus,
+  onPath,
 }: {
   model: Model
   node: GraphNode
   onSelect: (id?: string) => void
   /** Extra button next to "Copy ID", e.g. "Open diagram". */
   action?: { label: string; run: () => void }
+  /** Show what this resource is connected to (the focus view). */
+  onFocus?: () => void
+  /** Show how this resource reaches another (the path view). */
+  onPath?: (to: string) => void
 }) {
   const crumbs = breadcrumb(model, node.id).slice(0, -1)
   const groups = useMemo(() => related(model, node.id), [model, node.id])
@@ -40,6 +47,10 @@ export function DetailPanel({
   const diff = useContext(CompareContext)
   const change = diff?.byId.get(node.id)
   const since = diff && new Date(diff.older.manifest.createdAt).toLocaleDateString()
+  // Focus and paths are about the network: servers, LANs, gateways, Cross Connects, …
+  const network = networkNode(model, node.id) === node.id
+  const [picking, setPicking] = useState(false)
+  const reachable = useCallback((n: GraphNode) => n.id !== node.id && networkNode(model, n.id) === n.id, [model, node.id])
 
   return (
     <article>
@@ -84,6 +95,46 @@ export function DetailPanel({
           </button>
         )}
       </div>
+
+      {network && (onFocus || onPath) && (
+        <div className="row detail-actions">
+          {onFocus && (
+            <button className="btn small" onClick={onFocus} title="What this is connected to, across datacenters">
+              Focus
+            </button>
+          )}
+          {onPath && (
+            <button
+              className="btn small"
+              aria-expanded={picking}
+              onClick={() => setPicking((p) => !p)}
+              title="How this reaches another resource"
+            >
+              Path to…
+            </button>
+          )}
+        </div>
+      )}
+      {picking && onPath && (
+        <div className="add-link path-pick">
+          <ResourcePicker
+            model={model}
+            accept={reachable}
+            placeholder="Search a server, LAN, gateway or site…"
+            label={`Path from ${node.name} to`}
+            onPick={(n) => {
+              setPicking(false)
+              onPath(n.id)
+            }}
+            onCancel={() => setPicking(false)}
+          />
+          <div className="row">
+            <button className="btn small" onClick={() => setPicking(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {labels.length > 0 && (
         <div className="labels">

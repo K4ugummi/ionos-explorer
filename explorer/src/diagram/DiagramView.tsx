@@ -8,13 +8,18 @@ import {
   useReactFlow,
   useStoreApi,
   type EdgeTypes,
+  type NodeChange,
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { positionsOf, resetPositions, setPosition, type BoxPosition } from '../annotations/annotations'
+import { AnnotationsContext } from '../annotations/context'
 import { CompareContext } from '../diff/context'
+import { findPaths, MAX_HOPS } from '../model/paths'
 import type { Model } from '../model/types'
-import { contractDiagram, datacenterDiagram } from './build'
+import { modeKey, type DiagramMode } from '../ui/mode'
+import { contractDiagram, datacenterDiagram, diagramFor, focusDiagram, pathDiagram } from './build'
 import { elk } from './elk'
 import { useDismiss } from './dismiss'
 import { legendFits, refitOnResize, type Box, type Framing } from './framing'
@@ -24,8 +29,10 @@ import { lodFor, type Lod } from './lod'
 import { absolutePositions, layoutCache, layoutDiagram, layoutSignature, withData } from './layout'
 import { DiagramActions, toFlow, type FlowEdge, type FlowNode } from './flow'
 import { midpoint } from './geometry'
+import { applyPositions, movable, NO_OFFSETS, offsetTo, type Offset } from './positions'
 import { BoxNode, DcNode, ExternalNode, GroupNode, InternetNode, MoreNode, PeerNode, RoutedEdge } from './render'
 import type { Diagram, DiagramEdgeKind, Layout } from './types'
+import type { Layer } from './layers'
 
 export interface DiagramViewProps {
   model: Model
@@ -36,6 +43,11 @@ export interface DiagramViewProps {
   matches: Set<string> | null
   onSelect: (id?: string) => void
   onOpenDc: (dcId?: string) => void
+  /** A focus or path view on top of the contract or datacenter view. */
+  mode?: DiagramMode
+  onHops?: (hops: number) => void
+  /** Leaves the focus or path view: back to the view below it, or to this datacenter's (null: the contract view). */
+  onLeave?: (dcId?: string | null) => void
   /** Width covered by an overlay on the right (the detail drawer). */
   rightInset?: number
 }
@@ -92,7 +104,7 @@ function useLayout(diagram: Diagram) {
 
 const NOTHING_OPEN: ReadonlySet<string> = new Set()
 
-function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightInset = 0 }: DiagramViewProps) {
+function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, mode, onHops, onLeave, rightInset = 0 }: DiagramViewProps) {
   // Groups and routers the user opened, per view. Part of the diagram, so
   // the open and the closed state are laid out (and cached) separately.
   // Search matches are not: they never change the layout, a collapsed
@@ -102,41 +114,119 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
   // part of the diagram and so of the layout; the emphasis only dims.
   const [layers, setLayers] = useState<Layers>(loadLayers)
   const diff = useContext(CompareContext)
-  const viewKey = dcId ? `dc:${dcId}` : 'contract'
+  const modeId = mode && modeKey(mode)
+  const viewKey = modeId ?? (dcId ? `dc:${dcId}` : 'contract')
   const expanded = opened.get(viewKey) ?? NOTHING_OPEN
-  // Only a datacenter view depends on the selection: a selected member of a collapsed group is shown.
-  const focus = dcId ? selectedId : undefined
-  const diagram = useMemo(
-    () =>
-      dcId
-        ? datacenterDiagram(model, dcId, { expanded, selected: focus, hidden: layers.hidden })
-        : contractDiagram(model, { hidden: layers.hidden }),
-    [model, dcId, expanded, focus, layers.hidden],
+  // Only views with groups depend on the selection: a selected member of a collapsed group is shown.
+  const focus = dcId || mode ? selectedId : undefined
+  const paths = useMemo(() => (mode?.kind === 'path' ? findPaths(model, mode.from, mode.to) : []), [model, mode])
+  const noRoute = mode?.kind === 'path' && !paths.length
+  // A path runs along the longer side of the free canvas (the details drawer takes the right in path views).
+  const box = useRef<HTMLDivElement>(null)
+  const [tall, setTall] = useState(false)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const check = () => setTall(el.clientWidth - rightInset < el.clientHeight)
+    check()
+    const observer = new ResizeObserver(check)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [rightInset])
+  const build = useCallback(
+    (hidden: ReadonlySet<Layer>) => {
+      const options = { expanded, selected: focus, hidden, hops: mode?.hops }
+      if (mode?.kind === 'focus') return focusDiagram(model, [mode.id], options)
+      // No route: what is near each end, side by side.
+      if (mode?.kind === 'path')
+        return paths.length ? pathDiagram(model, paths, { down: tall }) : focusDiagram(model, [mode.from, mode.to], options)
+      return dcId ? datacenterDiagram(model, dcId, options) : contractDiagram(model, { hidden })
+    },
+    [model, dcId, expanded, focus, mode, paths, tall],
   )
+  const diagram = useMemo(() => build(layers.hidden), [build, layers.hidden])
   const bright = useMemo(() => emphasized(model, layers.emphasis, !!diff), [model, layers.emphasis, diff])
   // The legend lists only the lines this view draws (a peer line looks like a Cross Connect).
   const kinds = useMemo(() => new Set(diagram.edges.map((e) => (e.kind === 'peer' ? 'cross-connect' : e.kind))), [diagram])
   const state = useLayout(diagram)
-  const layout = state.layout
+  // Own positions (annotations), applied to the finished layout: moving a box
+  // never lays the view out again. Only in the contract and datacenter
+  // views: focus and path views are made for one question, rebuilt with
+  // every selection and fitted whole, and they share their boxes' ids.
+  const annotations = useContext(AnnotationsContext)
+  const ownView = mode ? undefined : diagram.key
+  const stored = annotations?.annotations.positions
+  const own = useMemo(() => (ownView && stored ? positionsOf(stored, ownView) : NO_OFFSETS), [stored, ownView])
+  // The box being dragged, until it is dropped and stored.
+  const [live, setLive] = useState<{ view: string; id: string; offset: Offset }>()
+  const offsets = useMemo(() => (live && live.view === ownView ? new Map(own).set(live.id, live.offset) : own), [own, live, ownView])
+  const layout = useMemo(() => state.layout && applyPositions(state.layout, offsets), [state.layout, offsets])
   const anchor = selectedId ? diagram.anchors.get(selectedId) : undefined
   // A selection a hidden layer keeps off the canvas (picked in search): say so, with a way back.
   const hiding = useMemo(
-    () =>
-      selectedId
-        ? hiddenBy(selectedId, layers.hidden, diagram, (hidden) =>
-            dcId ? datacenterDiagram(model, dcId, { expanded, selected: focus, hidden }) : contractDiagram(model, { hidden }),
-          )
-        : [],
-    [selectedId, layers.hidden, diagram, model, dcId, expanded, focus],
+    () => (selectedId ? hiddenBy(selectedId, layers.hidden, diagram, build) : []),
+    [selectedId, layers.hidden, diagram, build],
   )
+  // A selection a focus or path view does not reach (picked in search): offer its own diagram.
+  const outside = !!mode && !!selectedId && !anchor && !hiding.length
+  // With a mouse or pen every box that may move can be dragged. On a touch
+  // screen a finger on a box pans the canvas as before; only the selected
+  // box can be dragged (tap it first).
+  const touch = useCoarsePointer()
+  const draggable = useMemo(() => {
+    if (!ownView || !layout) return undefined
+    const can = movable(layout.nodes)
+    return touch ? new Set(anchor && can.has(anchor) ? [anchor] : []) : can
+  }, [ownView, layout, touch, anchor])
   const flow = useMemo(
-    () => (layout ? toFlow(layout, diagram, anchor, matches, bright) : undefined),
-    [layout, diagram, anchor, matches, bright],
+    () => (layout ? toFlow(layout, diagram, anchor, matches, bright, draggable) : undefined),
+    [layout, diagram, anchor, matches, bright, draggable],
   )
   const abs = useMemo(() => (layout ? absolutePositions(layout) : undefined), [layout])
+  // After "Reset layout", until something is moved again: the positions it forgot.
+  const [undo, setUndo] = useState<{ view: string; positions: BoxPosition[] }>()
+
+  // The box the pointer holds. React Flow drags the selected box along with
+  // it; only the one held moves (selecting is for the details, not for moving).
+  const held = useRef<string | undefined>(undefined)
+  /** A box dragged (or moved with the arrow keys): follow it live, store it when dropped. */
+  const onNodesChange = (changes: NodeChange<FlowNode>[]) => {
+    if (!ownView || !layout || !abs || !annotations) return
+    let dropped = false
+    for (const c of changes) {
+      if (c.type !== 'position' || !c.position || !draggable?.has(c.id) || (held.current && c.id !== held.current)) continue
+      const parent = layout.nodes.find((n) => n.id === c.id)?.parent
+      const p = parent ? abs.get(parent) : undefined
+      const offset = offsetTo(abs, offsets, c.id, { x: c.position.x + (p?.x ?? 0), y: c.position.y + (p?.y ?? 0) })
+      if (c.dragging) {
+        setLive({ view: ownView, id: c.id, offset })
+        continue
+      }
+      dropped = true
+      setLive(undefined)
+      setUndo(undefined)
+      annotations.update((a) => setPosition(a, { view: ownView, node: c.id, ...offset }))
+    }
+    // After the whole batch: it also holds the selected box's last position, which stays put.
+    if (dropped) held.current = undefined
+  }
+  const resetLayout = () => {
+    if (!ownView || !annotations) return
+    setUndo({ view: ownView, positions: annotations.annotations.positions.filter((p) => p.view === ownView) })
+    annotations.update((a) => resetPositions(a, ownView))
+    setRelaid(true)
+  }
+  const undoReset = () => {
+    if (!undo || !annotations) return
+    annotations.update((a) => undo.positions.reduce(setPosition, resetPositions(a, undo.view)))
+    setUndo(undefined)
+    setRelaid(true)
+  }
   const rf = useReactFlow()
-  const box = useRef<HTMLDivElement>(null)
   const dc = dcId ? model.nodes.get(dcId) : undefined
+  const name = (id: string) => model.nodes.get(id)?.name ?? id
+  const modeTitle =
+    mode?.kind === 'focus' ? `Focus: ${name(mode.id)}` : mode?.kind === 'path' ? `Path: ${name(mode.from)} → ${name(mode.to)}` : undefined
   // Frame the diagram in the part of the canvas the drawer leaves free.
   const fit = useMemo(
     () => ({ padding: { top: '24px', left: '64px', bottom: '24px', right: `${rightInset + 24}px` } as const, maxZoom: 1, duration: 200 }),
@@ -181,13 +271,17 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
 
   // A new diagram: frame the selection, or everything.
   const framed = useRef<string | undefined>(undefined)
+  const brought = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (!flow || framed.current === layout?.key) return
     framed.current = layout?.key
+    // A focus or path view is shown whole, its resource marked; the selection is in it.
+    const centre = target && !mode
+    if (mode) brought.current = anchor
     requestAnimationFrame(() => {
       // Set first: an unanimated move reaches the level of detail at once.
-      framing.current = target ? { kind: 'center', target, zoom: 1 } : { kind: 'fit' }
-      if (target) centerOn(target, 1)
+      framing.current = centre ? { kind: 'center', target, zoom: 1 } : { kind: 'fit' }
+      if (centre) centerOn(target, 1)
       else void rf.fitView({ ...fit, duration: 0 })
     })
     // centerOn reads the latest viewport; only the diagram change matters here.
@@ -198,7 +292,6 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
   // Once per selection: opening a group elsewhere lays the view out again
   // and must not pull it back. A member revealed by the selection (it was
   // in a collapsed group) has a target only once its layout is there.
-  const brought = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (!target) {
       if (!anchor) brought.current = undefined
@@ -289,7 +382,31 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
       <div className="diagram">
         <div className="dg-bar" style={{ marginRight: rightInset }}>
           <nav className="crumbs" aria-label="Diagram">
-            {dc ? (
+            {mode ? (
+              <>
+                {/* On a narrow screen only the mode and its close button stay. */}
+                <button className="dg-crumb-up" onClick={() => onOpenDc(undefined)}>
+                  All datacenters
+                </button>
+                {dc && (
+                  <>
+                    <span className="sep dg-crumb-up">›</span>
+                    <button className="dg-crumb-up" onClick={() => onLeave?.()}>
+                      {dc.name}
+                    </button>
+                  </>
+                )}
+                <span className="sep dg-crumb-up">›</span>
+                <strong title={modeTitle}>{modeTitle}</strong>
+                <button
+                  className="dg-mode-close"
+                  onClick={() => onLeave?.()}
+                  aria-label={`Close, back to ${dc ? dc.name : 'all datacenters'}`}
+                >
+                  ✕
+                </button>
+              </>
+            ) : dc ? (
               <>
                 <button onClick={() => onOpenDc(undefined)}>All datacenters</button>
                 <span className="sep">›</span>
@@ -300,8 +417,30 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
               <strong>All datacenters</strong>
             )}
           </nav>
-          <Legend datacenter={!!dc} kinds={kinds} />
-          <LayersMenu layers={layers} onChange={changeLayers} datacenter={!!dc} comparing={!!diff} />
+          {(mode?.kind === 'focus' || noRoute) && <Hops hops={mode!.hops} onChange={(h) => onHops?.(h)} />}
+          <Legend datacenter={!!dc || !!mode} kinds={kinds} />
+          <LayersMenu
+            layers={layers}
+            onChange={changeLayers}
+            scope={mode?.kind === 'path' && !noRoute ? 'path' : dc || mode ? 'datacenter' : 'contract'}
+            comparing={!!diff}
+          />
+          {ownView && own.size > 0 ? (
+            <button
+              className="btn small dg-reset"
+              onClick={resetLayout}
+              title={`Put the ${own.size === 1 ? 'box' : `${own.size} boxes`} you moved in this view back where the automatic layout places them`}
+            >
+              Reset layout
+            </button>
+          ) : (
+            ownView &&
+            undo?.view === ownView && (
+              <button className="btn small dg-reset" onClick={undoReset} title="Put the boxes back where you had moved them">
+                Undo reset
+              </button>
+            )
+          )}
         </div>
         <div
           className={`dg-canvas lod-${lod}`}
@@ -316,6 +455,14 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             nodesDraggable={false}
+            onNodesChange={onNodesChange}
+            onNodeDragStart={(_, n) => (held.current = n.id)}
+            onNodeDragStop={() => (held.current = undefined)}
+            // A drag is not a click: a box is selected by clicking it, never by moving it,
+            // and a click that shakes by a few pixels is still a click.
+            selectNodesOnDrag={false}
+            nodeDragThreshold={4}
+            nodeClickDistance={4}
             nodesConnectable={false}
             zoomOnDoubleClick={false}
             minZoom={0.04}
@@ -356,22 +503,41 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
             </div>
           )}
           {flow && diagram.nodes.length === 0 && <div className="dg-status">Nothing to draw here.</div>}
-          {flow && hiding.length > 0 && (
+          {flow && (hiding.length > 0 || outside || noRoute) && (
             <div className="dg-hint-row" style={{ right: rightInset + 12 }}>
-              <div className="dg-hint" role="status">
-                <span>
-                  <strong>{model.nodes.get(selectedId!)?.name}</strong> is hidden by Layers:{' '}
-                  {LAYERS.filter((l) => hiding.includes(l.id))
-                    .map((l) => l.label)
-                    .join(', ')}
-                </span>
-                <button
-                  className="btn small"
-                  onClick={() => changeLayers({ ...layers, hidden: new Set([...layers.hidden].filter((l) => !hiding.includes(l))) })}
-                >
-                  Show
-                </button>
-              </div>
+              {noRoute && (
+                <div className="dg-hint" role="status">
+                  <span>
+                    No route between <strong>{name(mode.from)}</strong> and <strong>{name(mode.to)}</strong>. Showing what is near each.
+                  </span>
+                </div>
+              )}
+              {outside && (
+                <div className="dg-hint" role="status">
+                  <span>
+                    <strong>{name(selectedId)}</strong> is not in this {mode.kind === 'focus' ? 'focus view' : noRoute ? 'view' : 'path'}
+                  </span>
+                  <button className="btn small" onClick={() => onLeave?.(diagramFor(model, selectedId) ?? null)}>
+                    Show in its diagram
+                  </button>
+                </div>
+              )}
+              {hiding.length > 0 && (
+                <div className="dg-hint" role="status">
+                  <span>
+                    <strong>{model.nodes.get(selectedId!)?.name}</strong> is hidden by Layers:{' '}
+                    {LAYERS.filter((l) => hiding.includes(l.id))
+                      .map((l) => l.label)
+                      .join(', ')}
+                  </span>
+                  <button
+                    className="btn small"
+                    onClick={() => changeLayers({ ...layers, hidden: new Set([...layers.hidden].filter((l) => !hiding.includes(l))) })}
+                  >
+                    Show
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -391,6 +557,49 @@ function useLod(framing: RefObject<Framing | undefined>) {
   const [lod, setLod] = useState<Lod>(() => lodFor(store.getState().transform[2]))
   useEffect(() => store.subscribe((s) => setLod((prev) => lodFor(s.transform[2], framing.current ? undefined : prev))), [store, framing])
   return lod
+}
+
+/** Whether the primary pointer is a finger (phones, tablets); follows a change of device. */
+function useCoarsePointer() {
+  const query = useMemo(() => (typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : undefined), [])
+  const [coarse, setCoarse] = useState(() => !!query?.matches)
+  useEffect(() => {
+    if (!query) return
+    const change = () => setCoarse(query.matches)
+    query.addEventListener('change', change)
+    return () => query.removeEventListener('change', change)
+  }, [query])
+  return coarse
+}
+
+/** How far a focus view looks: 1, 2 or 3 steps from the resource (see `neighbourhood`). */
+function Hops({ hops, onChange }: { hops: number; onChange: (hops: number) => void }) {
+  return (
+    <div
+      className="dg-hops"
+      role="radiogroup"
+      aria-label="Hops"
+      title="How many steps from the resource: a LAN, a Cross Connect, a server each count as one"
+    >
+      <span className="dg-hops-label" aria-hidden>
+        Hops
+      </span>
+      <div className="seg">
+        {Array.from({ length: MAX_HOPS }, (_, i) => i + 1).map((h) => (
+          <button
+            key={h}
+            type="button"
+            role="radio"
+            aria-checked={h === hops}
+            aria-label={`${h} ${h === 1 ? 'hop' : 'hops'}`}
+            onClick={() => onChange(h)}
+          >
+            {h}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /**

@@ -5,12 +5,15 @@ import { AnnotationsContext } from './annotations/context'
 import { diagramFor } from './diagram/build'
 import { CompareContext } from './diff/context'
 import { compareModels, markChanges } from './diff/diff'
+import { DEFAULT_HOPS } from './model/paths'
 import type { GraphNode, Model } from './model/types'
 import { search } from './search/search'
 import { Changes } from './ui/Changes'
 import { DetailPanel } from './ui/DetailPanel'
+import { modeParams, parseMode, type DiagramMode } from './ui/mode'
 import { OpenScreen } from './ui/OpenScreen'
 import { Overview } from './ui/Overview'
+import { PathPanel } from './ui/PathPanel'
 import { SearchPanel } from './ui/SearchPanel'
 import { useHashState } from './ui/useHashState'
 
@@ -98,7 +101,7 @@ function Explorer({
   demoLinks?: Annotations
   onClose: () => void
 }) {
-  // Manual links, sites and IP corrections, kept in this browser per contract.
+  // Manual links, sites, IP corrections and moved boxes, kept in this browser per contract.
   const key = storageKey(snapshotModel)
   const contract = snapshotModel.manifest.contract?.number
   const [annotations, setAnnotations] = useState(() => {
@@ -107,7 +110,9 @@ function Explorer({
   })
   useEffect(() => saveStored(key, annotations, contract), [key, annotations, contract])
   const updateAnnotations = useCallback((fn: (a: Annotations) => Annotations) => setAnnotations(fn), [])
-  const applied = useMemo(() => applyAnnotations(snapshotModel, annotations), [snapshotModel, annotations])
+  // Box positions are left out: moving a box keeps the model (and every layout, search and path cached on it).
+  const { sites, links, ips } = annotations
+  const applied = useMemo(() => applyAnnotations(snapshotModel, { sites, links, ips }), [snapshotModel, sites, links, ips])
   // Compared without annotations, so links and IP corrections are not "changes".
   const diff = useMemo(() => (older ? compareModels(older, snapshotModel) : undefined), [older, snapshotModel])
   const model = useMemo(() => markChanges(applied.model, diff), [applied.model, diff])
@@ -126,6 +131,10 @@ function Explorer({
   const query = params.get('q') ?? ''
   const selected = model.nodes.get(params.get('node') ?? '')
   const shown = selected && selected.id !== model.rootId ? selected : undefined
+  // Focus or path view on top of the contract or datacenter view (whose `dc` stays, to go back to).
+  const [focus, path, hops] = [params.get('focus'), params.get('path'), params.get('hops')]
+  const mode = useMemo(() => (view === 'diagram' ? parseMode({ focus, path, hops }, model) : undefined), [view, focus, path, hops, model])
+  const pathMode = mode?.kind === 'path' ? mode : undefined
 
   const deferredQuery = useDeferredValue(query)
   const matches = useMemo(
@@ -135,11 +144,21 @@ function Explorer({
 
   /** Selection on the canvas: the view stays where it is. */
   const select = (id?: string) => update({ node: id }, true)
-  /** Selection from search or links: the diagram follows to where the resource is drawn. */
-  const navigate = (id?: string) => (view === 'diagram' && id ? update({ node: id, dc: diagramFor(model, id, dcId) }, true) : select(id))
-  const openDc = (id?: string) => update({ view: undefined, dc: id, node: undefined }, true)
+  /**
+   * Selection from search or links: the diagram follows to where the resource
+   * is drawn. A focus or path view stays (the canvas offers to leave it if
+   * the resource is not in it).
+   */
+  const navigate = (id?: string) =>
+    view === 'diagram' && id && !mode ? update({ node: id, dc: diagramFor(model, id, dcId) }, true) : select(id)
+  const openDc = (id?: string) => update({ view: undefined, dc: id, node: undefined, ...modeParams() }, true)
   const setQuery = (q: string) => update({ q: q || undefined }, false)
-  const home = () => update({ node: undefined, dc: undefined }, true)
+  const home = () => update({ node: undefined, dc: undefined, ...modeParams() }, true)
+  /** Into a focus or path view; the diagram tab and the selection go along. */
+  const enter = (next: DiagramMode, node?: string) => update({ view: undefined, node, ...modeParams(next) }, true)
+  /** Back from a focus or path view to the view below it, or to another datacenter's (null: the contract view). */
+  const leave = (dc?: string | null) => update({ ...modeParams(), ...(dc !== undefined ? { dc: dc ?? undefined } : {}) }, true)
+  const setHops = (hops: number) => mode && update(modeParams({ ...mode, hops }), false)
 
   const m = model.manifest
   const issues = model.coverageIssues.length + model.warnings.length
@@ -148,7 +167,10 @@ function Explorer({
     if (view !== 'diagram') {
       if (node.kind === 'datacenter') return { label: 'Open diagram', run: () => openDc(node.id) }
       if (node.kind === 'contract') return undefined
-      return { label: 'Show in diagram', run: () => update({ view: undefined, node: node.id, dc: diagramFor(model, node.id) }, true) }
+      return {
+        label: 'Show in diagram',
+        run: () => update({ view: undefined, node: node.id, dc: diagramFor(model, node.id), ...modeParams() }, true),
+      }
     }
     if (node.kind === 'datacenter' && node.id !== dcId) return { label: 'Open diagram', run: () => openDc(node.id) }
     return undefined
@@ -208,26 +230,65 @@ function Explorer({
                     matches={matches}
                     onSelect={select}
                     onOpenDc={openDc}
-                    rightInset={shown && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
+                    mode={mode}
+                    onHops={setHops}
+                    onLeave={leave}
+                    rightInset={(shown || pathMode) && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
                   />
                 ) : (
                   <div className="dg-status" role="status">
                     {diagramError ? `Could not load the diagram: ${diagramError}` : 'Loading the diagram…'}
                   </div>
                 )}
-                {shown && (
+                {shown ? (
                   <aside className="drawer" aria-label="Details">
                     <button className="btn small drawer-close" onClick={() => select(undefined)} aria-label="Close details">
                       ✕
                     </button>
-                    <DetailPanel key={shown.id} model={model} node={shown} onSelect={navigate} action={action(shown)} />
+                    {pathMode && (
+                      <button className="btn small drawer-back" onClick={() => select(undefined)}>
+                        ‹ Path steps
+                      </button>
+                    )}
+                    <DetailPanel
+                      key={shown.id}
+                      model={model}
+                      node={shown}
+                      onSelect={navigate}
+                      action={action(shown)}
+                      onFocus={() => enter({ kind: 'focus', id: shown.id, hops: DEFAULT_HOPS }, shown.id)}
+                      onPath={(to) => enter({ kind: 'path', from: shown.id, to, hops: DEFAULT_HOPS })}
+                    />
                   </aside>
+                ) : (
+                  pathMode && (
+                    <aside className="drawer" aria-label="Path">
+                      <button className="btn small drawer-close" onClick={() => leave()} aria-label="Close the path view">
+                        ✕
+                      </button>
+                      <PathPanel
+                        model={model}
+                        from={pathMode.from}
+                        to={pathMode.to}
+                        onSelect={select}
+                        onReverse={() => enter({ ...pathMode, from: pathMode.to, to: pathMode.from })}
+                      />
+                    </aside>
+                  )
                 )}
               </main>
             ) : (
               <main className="main">
                 {shown ? (
-                  <DetailPanel key={shown.id} model={model} node={shown} onSelect={select} action={action(shown)} />
+                  <DetailPanel
+                    key={shown.id}
+                    model={model}
+                    node={shown}
+                    onSelect={select}
+                    action={action(shown)}
+                    onFocus={() => enter({ kind: 'focus', id: shown.id, hops: DEFAULT_HOPS }, shown.id)}
+                    onPath={(to) => enter({ kind: 'path', from: shown.id, to, hops: DEFAULT_HOPS })}
+                  />
                 ) : view === 'changes' ? (
                   <Changes model={snapshotModel} diff={diff} onCompare={onCompare} onSelect={select} />
                 ) : (

@@ -21,6 +21,8 @@ export type FlowEdgeData = {
   showLabel: boolean
   /** Touches the selection: its label stays at every zoom. */
   hl: boolean
+  /** Its route was dropped because the user moved an end: drawn as steps between the sides that face each other. */
+  moved?: boolean
 }
 
 export type FlowNode = Node<FlowNodeData>
@@ -40,10 +42,30 @@ export const DiagramActions = createContext<{
 /** Lines that are hard to tell apart without their name. */
 const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
 
+type Rect = Point & { width: number; height: number }
+
+/**
+ * The handles a line between two boxes leaves and enters by, for lines
+ * without a route: down from the bottom into the top, or up from the top
+ * into the bottom when the target lies above. With `sideways` (a line whose
+ * route was dropped because a box was moved), boxes side by side are joined
+ * left and right, whichever gap is wider.
+ */
+export function handles(s: Rect | undefined, t: Rect | undefined, sideways = false): [string, string] {
+  if (!s || !t) return ['bottom', 'top']
+  const down = t.y - (s.y + s.height)
+  const up = s.y - (t.y + t.height)
+  const right = t.x - (s.x + s.width)
+  const left = s.x - (t.x + t.width)
+  if (sideways && Math.max(right, left) > Math.max(down, up, 0)) return right >= left ? ['right-out', 'left-in'] : ['left-out', 'right-in']
+  return up >= 0 && up >= down ? ['top-out', 'bottom-in'] : ['bottom', 'top']
+}
+
 /**
  * Turns a layout into React Flow elements with selection and search state
  * applied. `emphasis` (model ids, from a layer emphasis) dims everything
- * else like a search does, without marking anything as a hit.
+ * else like a search does, without marking anything as a hit. `draggable`
+ * lists the boxes the user may move (own positions).
  */
 export function toFlow(
   layout: Layout,
@@ -51,6 +73,7 @@ export function toFlow(
   anchor: string | undefined,
   matches: Set<string> | null,
   emphasis: Set<string> | null = null,
+  draggable?: ReadonlySet<string>,
 ) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
   const selectedNode = anchor && byId.has(anchor) ? anchor : undefined
@@ -80,14 +103,10 @@ export function toFlow(
   // Unrouted edges to a box above (a router's LAN nearer the internet) leave
   // from the top instead of looping round from the bottom.
   const abs = absolutePositions(layout)
-  const upwards = (source: string, target: string) => {
-    const [s, t] = [abs.get(source), abs.get(target)]
-    return !!s && !!t && t.y + t.height <= s.y
-  }
 
   const related = new Set<string>()
   const edges: FlowEdge[] = layout.edges.map((e) => {
-    const up = !e.points && upwards(e.source, e.target)
+    const [sourceHandle, targetHandle] = e.points ? ['bottom', 'top'] : handles(abs.get(e.source), abs.get(e.target), e.moved)
     const touches = boxes.has(e.source) || boxes.has(e.target)
     const hl = touches || e.id === selectedEdge
     const hidden = e.onDemand && !touches
@@ -96,13 +115,15 @@ export function toFlow(
       id: e.id,
       source: e.source,
       target: e.target,
-      sourceHandle: up ? 'top-out' : 'bottom',
-      targetHandle: up ? 'bottom-in' : 'top',
+      sourceHandle,
+      targetHandle,
       type: 'routed',
       hidden,
       selectable: !!e.ref,
       zIndex: hl ? 2 : 1,
-      className: ['dg-edge', e.kind, hl && 'hl', !(lit(e.source) || lit(e.target) || bright?.has(e.id)) && 'dim'].filter(Boolean).join(' '),
+      className: ['dg-edge', e.kind, hl && 'hl', e.moved && 'moved', !(lit(e.source) || lit(e.target) || bright?.has(e.id)) && 'dim']
+        .filter(Boolean)
+        .join(' '),
       data: {
         kind: e.kind,
         label: e.label,
@@ -110,6 +131,7 @@ export function toFlow(
         ref: e.ref,
         showLabel: (hl && e.kind !== 'target') || (ALWAYS_LABELLED.has(e.kind) && !!e.label),
         hl,
+        moved: e.moved,
       },
     }
   })
@@ -121,11 +143,13 @@ export function toFlow(
     position: { x: n.x, y: n.y },
     width: n.width,
     height: n.height,
+    // Sizes are fixed, so a box is ready to drag at once; React Flow keeps its handles instead of measuring them again.
+    measured: { width: n.width, height: n.height },
     style: { width: n.width, height: n.height },
     zIndex: n.type === 'group' ? 0 : 3,
     selected: n.id === selectedNode,
     selectable: !!n.ref,
-    draggable: false,
+    draggable: !!draggable?.has(n.id),
     data: {
       node: n,
       // A "more" box counts the members it hides that match, not their NICs and volumes as well.

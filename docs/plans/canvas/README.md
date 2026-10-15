@@ -14,8 +14,8 @@ Work through the packages in order; tick them off here when done.
 - [x] [04 Detail by zoom](04-detail-by-zoom.md): names only when zoomed out
 - [x] [05 Layer switches](05-layers.md): show/hide kinds of things
 - [x] [06 Lines between locations](06-contract-routing.md): no curves across cards
-- [ ] [07 Focus and path view](07-focus-and-path.md): what is connected, and how A reaches B
-- [ ] [08 Own positions](08-own-positions.md): drag boxes, keep them
+- [x] [07 Focus and path view](07-focus-and-path.md): what is connected, and how A reaches B
+- [x] [08 Own positions](08-own-positions.md): drag boxes, keep them
 - [ ] [09 Export](09-export.md): SVG, PNG, draw.io
 
 01–03 fix what is most visible with real data and come first. 07 is the
@@ -56,7 +56,16 @@ or build a model in the test, like `diagram/scale.test.ts` does.
   (240 datacenters, uses `elkjs/lib/elk.bundled.js` in Node).
 - Model: `explorer/src/model/types.ts` (`GraphNode`, `GraphEdge`, `Model`);
   `model.edgesByNode`, `model.children`.
-- App shell: `explorer/src/App.tsx` (hash state: `view`, `dc`, `node`, `q`).
+- Focus and path views (07): `explorer/src/model/paths.ts` (network graph,
+  `neighbourhood`, `findPaths`, `describePath`), `focusDiagram` and
+  `pathDiagram` in `build.ts`, `explorer/src/ui/mode.ts` (hash),
+  `explorer/src/ui/PathPanel.tsx` (steps in the details drawer).
+- Own positions (08): `explorer/src/diagram/positions.ts` (`movable`,
+  `applyPositions`, `offsetTo`), stored as `positions` in
+  `explorer/src/annotations/annotations.ts`; drag handling and "Reset
+  layout" in `DiagramView.tsx`.
+- App shell: `explorer/src/App.tsx` (hash state: `view`, `dc`, `node`, `q`,
+  and `focus`, `path`, `hops` for the focus and path views).
 - Styles: `explorer/src/App.css`; colour tokens (light + dark) in
   `explorer/src/index.css`.
 - Architecture notes: `docs/ARCHITECTURE.md` (update the Diagram part when

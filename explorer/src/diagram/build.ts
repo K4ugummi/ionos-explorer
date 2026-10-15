@@ -1,7 +1,8 @@
 import { countsText } from '../diff/diff'
 import { MANY_LANS } from '../model/appliances'
 import { KINDS, subtypeLabel } from '../model/kinds'
-import type { GraphNode, Model, NodeKind } from '../model/types'
+import { DEFAULT_HOPS, neighbourhood, networkGraph, networkNode, type NetEdge, type Path } from '../model/paths'
+import type { GraphEdge, GraphNode, Model, NodeKind } from '../model/types'
 import { hiddenKind, type Layer } from './layers'
 import type { Diagram, DiagramEdge, DiagramNode, NodeData } from './types'
 
@@ -352,6 +353,11 @@ export interface DiagramOptions {
    * of the picture keeps its shape.
    */
   hidden?: ReadonlySet<Layer>
+  /**
+   * Resources a view is about (focus and path views): always shown like the
+   * selection, and a LAN among them is never folded into its router.
+   */
+  pinned?: ReadonlySet<string>
 }
 
 /**
@@ -540,7 +546,12 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   }
   const transit = new Set([...pccEdges.values()].flat())
   // A router the user unfolded (`lans:<box>` expanded) shows its LANs as boxes again.
-  const foldable = foldedLans(lans, devices, boxId, isRouter)
+  const foldable = foldedLans(
+    lans.filter((l) => !options.pinned?.has(l.id)),
+    devices,
+    boxId,
+    isRouter,
+  )
   const folded = new Map([...foldable].filter(([, box]) => !expanded.has(`lans:${box}`)))
   const stubs = new Map<string, string[]>() // router box → names of LANs only it uses
   for (const lan of lans) {
@@ -587,7 +598,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
       : selected?.kind === 'volume'
         ? ((model.edgesByNode.get(selected.id) ?? []).find((e) => e.kind === 'attached' && e.to === selected.id)?.from ?? selected.id)
         : selected?.id
-  const pinned = (n: GraphNode) => n.id === focus || !!n.appliance || !!n.change
+  const pinned = (n: GraphNode) => n.id === focus || !!options.pinned?.has(n.id) || !!n.appliance || !!n.change
   const hiddenIn = new Map<string, string>() // hidden member → its "more" box
   /** The members of a group as drawn, and its "more" box; hidden members are found on that box. */
   const collapse = (gid: string, list: GraphNode[], what: string) => {
@@ -822,6 +833,293 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   }
 
   return empty
+}
+
+// --- focus and path views --------------------------------------------------------
+
+/** A focus view: the datacenter view's options, and how far to look (see `neighbourhood`). */
+export interface FocusOptions extends DiagramOptions {
+  hops?: number
+}
+
+/**
+ * The model cut down to these network nodes, their datacenters, the NICs
+ * and VPN tunnels inside them and the volumes of their servers (so those
+ * find their box), and the edges among all of them.
+ */
+function subModel(model: Model, keep: Iterable<string>): Model {
+  const nodes = new Map<string, GraphNode>()
+  const put = (id?: string) => {
+    const n = id ? model.nodes.get(id) : undefined
+    if (n) nodes.set(n.id, n)
+  }
+  for (const id of keep) {
+    put(id)
+    put(model.nodes.get(id)?.dcId)
+    for (const c of model.children.get(id) ?? []) if (['nic', 'vpntunnel'].includes(model.nodes.get(c)?.kind ?? '')) put(c)
+    for (const e of model.edgesByNode.get(id) ?? []) if (e.kind === 'attached' && e.from === id) put(e.to)
+  }
+  const edges = model.edges.filter((e) => nodes.has(e.from) && nodes.has(e.to))
+  const children = new Map<string, string[]>()
+  for (const n of nodes.values())
+    if (n.parentId && nodes.has(n.parentId)) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n.id])
+  const edgesByNode = new Map<string, GraphEdge[]>()
+  for (const e of edges) for (const id of [e.from, e.to]) edgesByNode.set(id, [...(edgesByNode.get(id) ?? []), e])
+  return { ...model, nodes, edges, children, edgesByNode }
+}
+
+/** The datacenter a resource is drawn in, if any. */
+function dcOf(model: Model, id: string) {
+  const dc = model.nodes.get(id)?.dcId
+  return dc && model.nodes.get(dc)?.kind === 'datacenter' ? dc : undefined
+}
+
+/**
+ * Everything within `hops` of one or more resources (the focus view; with
+ * two, the "no route" view of a path), across datacenters. Each datacenter
+ * is a group drawn by the datacenter view's rules (tiers, routers, folded
+ * LANs, collapsed groups, layers), from the part of the model in reach;
+ * the focus's datacenter comes first. Cross Connects sit between the groups
+ * and lead to peer datacenters out of reach; endpoints outside the contract
+ * and the tunnels and manual links in reach are drawn between them too. The
+ * resources the view is about are marked `focus` and always shown.
+ */
+export function focusDiagram(model: Model, centres: string[], options: FocusOptions = {}): Diagram {
+  const hops = options.hops ?? DEFAULT_HOPS
+  const hide = options.hidden ?? NO_LAYERS
+  const roots = [...new Set(centres.map((c) => networkNode(model, c)).filter((id): id is string => !!id))]
+  const near = new Set<string>()
+  for (const r of roots) for (const id of neighbourhood(model, r, hops).keys()) near.add(id)
+  const sub = subModel(model, near)
+
+  const nodes: DiagramNode[] = []
+  const lines: DiagramEdge[] = []
+  const anchors = new Map<string, string>()
+  const hidden = new Map<string, string>()
+  const ids = new Set<string>()
+  const push = (n: DiagramNode) => {
+    // A VPN gateway on LANs of two datacenters is drawn in the first.
+    if (ids.has(n.id)) return
+    ids.add(n.id)
+    nodes.push(n)
+  }
+
+  const named = (ids: Iterable<string>) => [...ids].map((id) => model.nodes.get(id)!).sort(byName)
+  const firstDcs = roots.map((r) => dcOf(model, r)).filter((d): d is string => !!d)
+  const dcs = [
+    ...new Set([...firstDcs, ...named(new Set([...near].map((id) => dcOf(model, id)).filter((d): d is string => !!d))).map((d) => d.id)]),
+  ]
+
+  // Each datacenter by its own rules. Cross Connects, peers and links are drawn across them below.
+  const own = new Set<Layer>([...hide, 'links', 'peers'])
+  // A LAN with something out of reach on it is not "only here": it is not folded into its router.
+  const graph = networkGraph(model)
+  const pinned = new Set([
+    ...roots,
+    ...[...near].filter((id) => model.nodes.get(id)!.kind === 'lan' && graph.get(id)!.some((e) => !near.has(e.to))),
+  ])
+  for (const dc of dcs) {
+    const n = model.nodes.get(dc)!
+    const gid = `focus:${dc}`
+    push({
+      id: gid,
+      type: 'group',
+      data: { title: n.name, subtitle: n.location },
+      layout: { ...LAYERED, 'elk.padding': GROUP_PADDING, 'elk.aspectRatio': '1.6' },
+    })
+    anchors.set(dc, gid)
+    const d = datacenterDiagram(sub, dc, { expanded: options.expanded, selected: options.selected, hidden: own, pinned })
+    // Every datacenter has its own internet box; Cross Connect hubs are shared.
+    const rename = (id: string) => (id === 'internet' ? `internet:${dc}` : id)
+    for (const x of d.nodes) if (x.type !== 'hub') push({ ...x, id: rename(x.id), parent: x.parent ?? gid })
+    for (const e of d.edges) lines.push(e.source === 'internet' ? { ...e, id: `internet:${dc}->${e.target}`, source: rename(e.source) } : e)
+    for (const [k, v] of d.anchors) if (!anchors.has(k)) anchors.set(k, v)
+    for (const [k, v] of d.hidden ?? []) hidden.set(k, v)
+  }
+
+  // Cross Connects between the groups; datacenters out of reach behind them as peers.
+  for (const pcc of named(near).filter((n) => n.kind === 'pcc')) {
+    const hub = `cc:${pcc.id}`
+    const peers = pccPeers(model, pcc.id)
+    push({ id: hub, type: 'hub', ref: pcc.id, ...SIZE.hub, data: { ...base(pcc), subtitle: pccSubtitle(pcc, peers.size) } })
+    anchors.set(pcc.id, hub)
+    if (hide.has('peers')) continue
+    for (const dc of named(peers.keys())) {
+      const lans = peers.get(dc.id)!
+      if (lans.some((l) => near.has(l.id))) continue
+      const pid = `peer:${dc.id}`
+      push({ id: pid, type: 'peer', ref: dc.id, ...SIZE.peer, data: { ...base(dc), subtitle: dc.location } })
+      if (!anchors.has(dc.id)) anchors.set(dc.id, pid)
+      lines.push({ id: `${hub}->${pid}`, source: hub, target: pid, kind: 'peer', label: lans.map((l) => l.name).join(', ') })
+    }
+  }
+
+  // Anything in reach the datacenter rules did not draw (a VPN gateway whose
+  // LANs are out of reach) gets a box of its own, unless its layer is off.
+  for (const n of named(near)) {
+    if (anchors.has(n.id) || hiddenKind(hide, n.kind) || n.kind === 'external') continue
+    const dc = dcOf(model, n.id)
+    push({
+      id: n.id,
+      type: 'resource',
+      parent: dc && `focus:${dc}`,
+      ref: n.id,
+      ...SIZE.resource,
+      data: { ...base(n), subtitle: subtitle(n) },
+    })
+    anchors.set(n.id, n.id)
+  }
+
+  // Endpoints outside the contract, VPN tunnels and manual links in reach.
+  if (!hide.has('links')) {
+    for (const n of named(near).filter((x) => x.kind === 'external')) {
+      push(externalNode(n, n.id))
+      anchors.set(n.id, n.id)
+    }
+    // A transit LAN folded into its router is anchored on a line: links start at the router.
+    const end = (n: GraphNode) => {
+      const a = n.kind === 'datacenter' ? undefined : anchors.get(n.id)
+      return a && (ids.has(a) ? a : lines.find((e) => e.id === a)?.source)
+    }
+    for (const l of links(sub)) {
+      const [source, target] = [end(l.from), end(l.to)]
+      if (!source || !target || source === target) continue
+      lines.push({ id: l.id, source, target, kind: l.kind, label: l.label, ref: l.ref })
+      if (l.kind === 'tunnel') anchors.set(l.ref, l.id)
+    }
+  }
+
+  for (const r of roots) {
+    const i = nodes.findIndex((n) => n.id === anchors.get(r))
+    if (i >= 0) nodes[i] = { ...nodes[i], data: { ...nodes[i].data, focus: true } }
+  }
+  // Top-level boxes from the focus outwards: its datacenter, the Cross Connects
+  // and endpoints next to it, the datacenters behind them, the peers. Lines
+  // between groups are laid out from the earlier box to the later one, so
+  // the picture reads from the focus down.
+  const parentOf = new Map(nodes.map((n) => [n.id, n.parent]))
+  const top = (id: string): string => (parentOf.get(id) ? top(parentOf.get(id)!) : id)
+  const rank = (id: string) => {
+    const n = nodes.find((x) => x.id === id)!
+    if (n.type === 'group') return firstDcs.some((dc) => id === `focus:${dc}`) ? 0 : 3
+    return n.type === 'hub' ? 1 : n.type === 'peer' ? 4 : 2
+  }
+  const ranks = new Map(nodes.filter((n) => !n.parent).map((n) => [n.id, rank(n.id)]))
+  const ordered = nodes.map((n, i) => ({ n, r: ranks.get(top(n.id))!, i })).sort((a, b) => a.r - b.r || a.i - b.i)
+  const edgeIds = new Set<string>()
+  const edges = lines.filter((e) => ids.has(e.source) && ids.has(e.target) && !edgeIds.has(e.id) && edgeIds.add(e.id))
+  return {
+    key: `focus:${roots.join(',')}:${hops}`,
+    nodes: ordered.map((x) => x.n),
+    edges,
+    anchors,
+    hidden,
+    rootLayout: {
+      'elk.algorithm': 'rectpacking',
+      'elk.spacing.nodeNode': '40',
+      'elk.aspectRatio': '1.8',
+      'elk.padding': '[top=20,left=20,bottom=20,right=20]',
+    },
+    linkedLayout: LINKED,
+  }
+}
+
+/** How a step of a path is drawn. */
+const PATH_LINE: Partial<Record<NetEdge['kind'], DiagramEdge['kind']>> = {
+  'cross-connect': 'cross-connect',
+  target: 'target',
+  tunnel: 'tunnel',
+  manual: 'manual',
+}
+
+/**
+ * Paths from one resource to another, left to right (or, with `down`, top
+ * to bottom, for a canvas taller than wide): the start, each hop (LAN,
+ * Cross Connect, router, …), the end. A resource on several paths is one
+ * box, so the paths fan out and join again; the alternatives of a step
+ * (the other firewall of a pair) stand beside it. Boxes are grouped by
+ * datacenter; Cross Connects and endpoints outside the contract sit between
+ * the groups. Layers do not apply: a path shows what it uses.
+ */
+export function pathDiagram(model: Model, paths: Path[], { down = false } = {}): Diagram {
+  const graph = networkGraph(model)
+  const direction = down ? 'DOWN' : 'RIGHT'
+  const nodes: DiagramNode[] = []
+  const edges: DiagramEdge[] = []
+  const anchors = new Map<string, string>()
+  /** The group of a datacenter, made when its first box comes. */
+  const group = (dc: string) => {
+    const gid = `path:${dc}`
+    if (!anchors.has(dc)) {
+      const n = model.nodes.get(dc)!
+      const layout = { ...LAYERED, 'elk.direction': direction, 'elk.padding': GROUP_PADDING }
+      nodes.push({ id: gid, type: 'group', data: { title: n.name, subtitle: n.location }, layout })
+      anchors.set(dc, gid)
+    }
+    return gid
+  }
+  const box = (id: string) => {
+    if (anchors.has(id)) return
+    const n = model.nodes.get(id)!
+    const dc = dcOf(model, id)
+    const parent = dc && group(dc)
+    anchors.set(id, id)
+    for (const c of model.children.get(id) ?? []) if (model.nodes.get(c)?.kind === 'nic') anchors.set(c, id)
+    if (n.kind === 'external') return nodes.push(externalNode(n, id))
+    const [type, size, what] =
+      n.kind === 'lan'
+        ? (['lan', { width: 240, height: SIZE.lanHeight }, n.subtype === 'public' ? 'Public LAN' : 'Private LAN'] as const)
+        : n.kind === 'pcc'
+          ? (['hub', SIZE.hub, pccSubtitle(n, pccPeers(model, n.id).size)] as const)
+          : (['resource', SIZE.resource, subtitle(n)] as const)
+    nodes.push({
+      id,
+      type,
+      parent,
+      ref: id,
+      ...size,
+      data: { ...base(n), subtitle: what, public: (n.kind === 'lan' && n.subtype === 'public') || undefined },
+    })
+  }
+  const pairs = new Set<string>()
+  for (const p of paths) {
+    const at = p.nodes.map((id, i) => [id, ...p.alternatives[i]])
+    at.flat().forEach(box)
+    for (let i = 0; i + 1 < at.length; i++) {
+      for (const x of at[i]) {
+        for (const y of at[i + 1]) {
+          const e = graph.get(x)?.find((g) => g.to === y)
+          if (!e || pairs.has(`${x}|${y}`)) continue
+          pairs.add(`${x}|${y}`).add(`${y}|${x}`)
+          const kind = PATH_LINE[e.kind] ?? 'lan'
+          const id = e.kind === 'tunnel' ? `tun:${e.ref}` : `p:${x}->${y}`
+          // A tunnel selects the tunnel; a manual link (an annotation, no model node) its first end.
+          edges.push({
+            id,
+            source: x,
+            target: y,
+            kind,
+            label: e.label,
+            ref: e.kind === 'tunnel' ? e.ref : e.kind === 'manual' ? x : undefined,
+          })
+          if (e.kind === 'tunnel' && e.ref) anchors.set(e.ref, id)
+        }
+      }
+    }
+  }
+  const ends = new Set(paths.flatMap((p) => [p.nodes[0], p.nodes[p.nodes.length - 1]]))
+  for (const n of nodes) if (ends.has(n.id)) n.data = { ...n.data, focus: true }
+  const [from, to] = paths.length ? [paths[0].nodes[0], paths[0].nodes[paths[0].nodes.length - 1]] : []
+  return {
+    key: `path:${from},${to}:${down ? 'down' : 'right'}`,
+    nodes,
+    edges,
+    anchors,
+    rootLayout: { ...LAYERED, 'elk.direction': direction, 'elk.padding': '[top=20,left=20,bottom=20,right=20]' },
+    // The groups and the Cross Connects between them are one graph, so every line is routed.
+    linkedLayout: { ...LINKED, 'elk.direction': direction },
+    directed: true,
+  }
 }
 
 /**

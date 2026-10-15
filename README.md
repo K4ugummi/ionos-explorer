@@ -67,12 +67,32 @@ but changes; the choice is remembered in this browser. A resource picked
 in search that a hidden layer leaves out gets a note with a "Show" button.
 On the contract view, tunnels and links between locations are routed
 around the datacenter cards.
+**Own positions.** Drag a box, a datacenter card or a group (location,
+server group) in the contract or a datacenter view to place it yourself;
+it stays there, its lines follow as right-angled steps, and the automatic
+layout keeps placing everything else. With the keyboard, the selected box
+moves with the arrow keys (Shift: further); on a touch screen, tap a box
+first, then drag it. "Reset layout" in the diagram bar puts the view back.
+Positions are saved with the links and IP corrections below (also in the
+exported file).
+**Focus and paths.** "Focus" in a resource's details shows what it is
+connected to across datacenters, 1–3 hops out (a LAN, a Cross Connect, a
+server each count as one): its datacenter and the ones behind its Cross
+Connects, drawn by the same rules. "Path to…" picks a second resource and
+shows the shortest routes between them, step by step in the details and
+as a diagram grouped by datacenter. Routes pass LANs, Cross Connects, load
+balancers (listener to target), VPN gateways and tunnels, manual links and
+sites, and servers detected as appliances; other servers in two LANs only
+as a last resort, marked as such. With no route, both neighbourhoods are
+shown with a hint to add the missing link. Both views live in the URL
+(`focus=`, `path=`, `hops=`); the breadcrumbs, ✕ or the browser's back
+button return to the view before.
 Links the API cannot see, such as an IPsec tunnel between two Cisco VMs, can
 be added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
 keeps a record that may be outdated (`dhcp:off` finds them), and a
 correction, entered per NIC or pasted as a list on the Overview page, is
-shown next to the IONOS value. Links and corrections stay in your browser;
-export/import them as a file on the Overview page. The demo snapshot comes
+shown next to the IONOS value. Links, corrections and box positions stay in
+your browser; export/import them as a file on the Overview page. The demo snapshot comes
 with examples (`fixtures/demo-annotations.json`).
 
 **Comparing snapshots.** On the Changes tab, load an older snapshot of the

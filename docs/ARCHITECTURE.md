@@ -114,8 +114,9 @@ Modules:
   its path: contract › datacenter › LAN › server.
 - `src/diagram`: React Flow (xyflow) for rendering, ELK.js (in a web worker)
   for layout. A diagram is pure data derived from the model, with fixed node
-  sizes so it can be laid out before rendering. Nodes cannot be dragged; ELK
-  routes every edge orthogonally. Two levels:
+  sizes so it can be laid out before rendering. ELK routes every edge
+  orthogonally; the user can move boxes afterwards (*own positions*, below).
+  Two levels (the focus and path views below build on them):
   1. **Contract**: datacenter cards grouped by location, packed to fit the
      screen. Cross Connects with exactly two peer datacenters draw as a
      line; with any other number as a hub node (a Cross Connect is one
@@ -232,11 +233,107 @@ Modules:
   canvas, "fra-core-nlb is hidden by Layers: Load balancers", with a
   "Show" button that turns that layer on again (`hiddenBy` builds the view
   with each hidden layer shown in turn). The legend lists only the line
-  kinds the current diagram draws. React Flow, the ELK
+  kinds the current diagram draws.
+
+  *Focus and path views* (`src/model/paths.ts`, `focusDiagram` and
+  `pathDiagram` in `build.ts`): what a resource is connected to, and how one
+  reaches another, across datacenters. Both work on the *network graph* of
+  the applied model (so manual links and sites count): servers, LANs, Cross
+  Connects, NAT and VPN gateways, load balancers, node pools, PostgreSQL and
+  endpoints outside the contract; edges from `member`, `cross-connect`,
+  `gateway`, `connection`, `listener`, `target-lan`, `target` (an ALB's
+  target group skipped), `tunnel` (from the VPN gateway) and `manual`,
+  undirected. NICs, volumes and tunnels stand for their server or gateway
+  (`networkNode`). `neighbourhood(model, id, hops)` is a breadth-first
+  search where every node counts as a hop (from a server: 1 its LANs, 2
+  what else is on them and their Cross Connects). `findPaths` returns up to
+  three shortest paths without a node twice: Dijkstra, then Yen's algorithm
+  (with Lawler's rule). In the middle of a path only LANs, Cross Connects,
+  VPN gateways, endpoints outside, load balancers (in from the listener LAN,
+  out to a target) and servers may stand; a server that is no detected
+  appliance costs `PLAIN_SERVER_COST` (1000) hops, so a route through
+  appliances always wins and plain multi-homed servers are a last resort
+  (listed in `plain`). Twins (same kind, appliance or not, same neighbours:
+  an HA pair, a web farm) are searched through once; other nodes that join
+  the same two neighbours at the same cost are a path's `alternatives`, so
+  a route via fw-01 or fw-02 is one route. A path with a shortcut (two inner
+  nodes are neighbours) is not shown. `describePath` puts each step in
+  words ("member of LAN app", "Cross Connect fra-backbone to
+  fra-prod-data", "routed by fra-core-fw-01 (likely firewall or VPN
+  gateway), or fra-core-fw-02"). Results are cached per model.
+
+  The modes live in the hash (`src/ui/mode.ts`): `focus=<id>` or
+  `path=<from>,<to>`, with `hops=1|3` (2 is the default); `dc` stays, so
+  the breadcrumbs ("All datacenters › fra-prod-core › Focus: fra-core-fw-01
+  ✕"), ✕ and the browser's back button return to the view below. The
+  details panel of any network resource has "Focus" and "Path to…" (a
+  search picker shared with the manual-link form). `focusDiagram` cuts the
+  model down to the neighbourhood and draws each datacenter in it with
+  `datacenterDiagram` (tiers, routers, folded LANs, collapsed groups,
+  layers, selection all apply) as a group; Cross Connects sit between the
+  groups and lead to peer datacenters out of reach, endpoints outside and
+  the tunnels and links in reach are drawn too. A LAN with something out of
+  reach on it is not folded into its router (`DiagramOptions.pinned`, which
+  also keeps the focus out of a "+N more" box). Boxes are ordered from the
+  focus outwards (its datacenter, Cross Connects, the datacenters behind
+  them, peers) so the linked layout reads from the focus down. The focus is
+  marked (`NodeData.focus`, an outline) and keeps its detail at every zoom;
+  a new focus or path view is fitted whole. `pathDiagram` merges the paths
+  into one graph (a box per resource, alternatives beside each step),
+  grouped by datacenter with Cross Connects and endpoints between, laid out
+  left to right, or top to bottom when the free canvas is taller than wide
+  (the details drawer is always open in a path view); it is `directed`, so
+  the linked layout keeps lines pointing from start to end. Layers do not
+  apply to a path (the menu greys them out); emphasis, search dimming and
+  comparison markers do. The drawer shows the steps of each route
+  (`PathPanel`): with no route, the canvas shows both neighbourhoods side by
+  side and the panel says that tunnels or routes inside VMs can be added as
+  manual links. A resource picked in search that a focus or path view does
+  not contain gets a note with "Show in its diagram".
+
+  *Own positions* (`positions.ts`): in the contract and datacenter views
+  the user can drag top-level boxes and groups, and the boxes in a group
+  ELK lays out as a graph (datacenter cards and hubs in a location); not
+  the members of a packed group or its "+N more" box (`movable`). A drop
+  stores an offset from the automatic place, per view (the diagram key,
+  `contract` or `dc:<id>`) and diagram node id, in the annotations
+  (`positions`), so a layout with new resources keeps the intention.
+  Offsets are applied to the finished layout (`applyPositions`, after
+  `withData`), so they are no part of the layout signature: dragging never
+  lays a view out again, and the model is not rebuilt either (`App` leaves
+  positions out of `applyAnnotations`). A moved box takes its contents
+  along; a group with a moved box inside is drawn around its contents (it
+  grows or shrinks, its padding stays). Routed lines whose ends moved apart
+  lose their points (`moved`) and are drawn as right-angled steps between
+  the sides that face each other (`handles` in `flow.ts`); lines whose two
+  ends moved together keep their route, shifted. Offsets for boxes a view
+  no longer has (a collapsed group, a folded LAN, a hidden layer, a
+  resource gone from the snapshot) or may not move (a server that joined a
+  group) are kept and ignored. While dragging, the offset lives in the
+  canvas and follows every pointer move; the drop (and each arrow key on
+  the selected, focused box, 5 px or 20 px with Shift) writes it to the
+  annotations. A drag never selects (`selectNodesOnDrag` off) and a click
+  may shake by 4 px; only the box held moves, not the selected one along
+  with it. On a touch screen (`(pointer: coarse)`) a finger on a box pans
+  the canvas as before and only the selected box can be dragged. "Reset
+  layout" in the bar (while the view has stored positions) forgets them,
+  with "Undo reset" until the next move; the Overview's "Box positions"
+  resets all views. Focus and path views have no own positions: they are
+  built per question, fitted whole and share their boxes' ids with the
+  datacenter views. Search, selection framing, the minimap and comparisons
+  use the moved positions.
+
+  Two layout rules came with these views and leave the earlier views as
+  they were: in a linked box, a group no routed line enters (a packed server
+  group; lines end at its box) keeps its own algorithm; and lines between
+  two top-level boxes join them into a linked box, since the packing root
+  routes nothing.
+
+  React Flow, the ELK
   client and the canvas are a chunk of their own, fetched when the user
   starts opening a snapshot (first click, key or drag on the open screen);
   the 1.6 MB ELK worker is fetched on the first layout.
-- `src/ui`: open screen, search panel, detail panel (properties, connections, contents, raw JSON), contract overview with the visibility report. Selection and query live in the URL hash.
+- `src/ui`: open screen, search panel, detail panel (properties, connections, contents, raw JSON, "Focus" and "Path to…"), the path steps (`PathPanel`), contract overview with the visibility report. Selection, query and the focus or path view live in the URL hash.
 
 ### Connectivity the API cannot see
 
@@ -272,7 +369,9 @@ NICs. The explorer handles this in three layers:
    browser's local storage and exported/imported as a JSON file
    (`format: "ionos-explorer-annotations"`, keyed by resource ID), never in
    the snapshot. Links to resources missing from a snapshot are kept and
-   reported. Drawn dotted orange; VPN tunnels dashed magenta.
+   reported. Drawn dotted orange; VPN tunnels dashed magenta. The same
+   file carries the boxes the user moved (`positions: [{view, node, dx,
+   dy}]`, merged by view and box like links by id).
 4. **IP corrections (same file, `ips: [{nic, ips, note}]`).** IONOS only
    knows the IP it has on record for a NIC; with DHCP off it never hands it
    out and the VM may use another. The model keeps NICs' `dhcp` flag

@@ -36,15 +36,29 @@ export interface IpFix {
   note?: string
 }
 
+/**
+ * A box the user moved in a diagram: how far from where the automatic layout
+ * puts it (relative, so a layout with new resources keeps the intention).
+ */
+export interface BoxPosition {
+  /** The diagram: `contract` or `dc:<datacenter id>` (the diagram's key). */
+  view: string
+  /** The diagram node: a datacenter card, LAN, server, group, … */
+  node: string
+  dx: number
+  dy: number
+}
+
 export interface Annotations {
   sites: Site[]
   links: ManualLink[]
   ips: IpFix[]
+  positions: BoxPosition[]
 }
 
-export const EMPTY: Annotations = { sites: [], links: [], ips: [] }
+export const EMPTY: Annotations = { sites: [], links: [], ips: [], positions: [] }
 
-export const isEmpty = (a: Annotations) => !a.sites.length && !a.links.length && !a.ips.length
+export const isEmpty = (a: Annotations) => !a.sites.length && !a.links.length && !a.ips.length && !a.positions.length
 
 export const siteNodeId = (site: Pick<Site, 'id'>) => `site:${site.id}`
 
@@ -86,13 +100,35 @@ export function removeIpFix(a: Annotations, nic: string): Annotations {
   return { ...a, ips: a.ips.filter((f) => f.nic !== nic) }
 }
 
-/** Entries of b replace entries of a with the same id (IP corrections: same NIC). */
+const positionKey = (p: Pick<BoxPosition, 'view' | 'node'>) => JSON.stringify([p.view, p.node])
+
+/** Moves a box to (dx, dy) from its automatic place; back to 0, 0 forgets it. */
+export function setPosition(a: Annotations, p: BoxPosition): Annotations {
+  const key = positionKey(p)
+  const dx = Math.round(p.dx)
+  const dy = Math.round(p.dy)
+  const rest = a.positions.filter((e) => positionKey(e) !== key)
+  return { ...a, positions: dx || dy ? [...rest, { view: p.view, node: p.node, dx, dy }] : rest }
+}
+
+/** Forgets the moved boxes of one view (all views without one). */
+export function resetPositions(a: Annotations, view?: string): Annotations {
+  return { ...a, positions: view === undefined ? [] : a.positions.filter((p) => p.view !== view) }
+}
+
+/** The boxes moved in one view, by diagram node id. */
+export function positionsOf(positions: readonly BoxPosition[], view: string): Map<string, { dx: number; dy: number }> {
+  return new Map(positions.filter((p) => p.view === view).map((p) => [p.node, { dx: p.dx, dy: p.dy }]))
+}
+
+/** Entries of b replace entries of a with the same id (IP corrections: same NIC; positions: same view and box). */
 export function merge(a: Annotations, b: Annotations): Annotations {
   const by = <T>(x: T[], y: T[], key: (e: T) => string) => [...new Map([...x, ...y].map((e) => [key(e), e])).values()]
   return {
     sites: by(a.sites, b.sites, (e) => e.id),
     links: by(a.links, b.links, (e) => e.id),
     ips: by(a.ips, b.ips, (e) => e.nic),
+    positions: by(a.positions, b.positions, positionKey),
   }
 }
 
@@ -110,11 +146,21 @@ export function normalizeIP(s: string): string | undefined {
 // --- files -----------------------------------------------------------------------
 
 export function serialize(a: Annotations, contract?: number): string {
-  return JSON.stringify({ format: FORMAT, version: 1, contract, sites: a.sites, links: a.links, ips: a.ips }, null, 2) + '\n'
+  return (
+    JSON.stringify({ format: FORMAT, version: 1, contract, sites: a.sites, links: a.links, ips: a.ips, positions: a.positions }, null, 2) +
+    '\n'
+  )
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,199}$/
 const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined)
+/** Diagram keys and node ids: built from resource ids, names (`loc:de/fra`) and LAN lists, so wider than `ID`; no control characters. */
+const isKey = (v: unknown): v is string =>
+  typeof v === 'string' && v.length > 0 && v.length <= 500 && ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+/** How far a box may be moved, in diagram pixels; beyond is junk. */
+const MAX_OFFSET = 1_000_000
+/** More entries than any team moves by hand; a guard against huge files. */
+const MAX_POSITIONS = 20_000
 
 /** Parses an annotations file; throws with a readable message. Unknown fields are dropped. */
 export function parse(input: string | unknown): { annotations: Annotations; contract?: number } {
@@ -153,7 +199,23 @@ export function parse(input: string | unknown): { annotations: Annotations; cont
     if (!nic || !ID.test(nic) || !list.length) continue
     ips.set(nic, { nic, ips: list.slice(0, 16), note: text(f.note, 2000) })
   }
-  return { annotations: { sites, links, ips: [...ips.values()] }, contract: typeof d.contract === 'number' ? d.contract : undefined }
+  // Kept even when the view or box is not in this snapshot: the diagram ignores what it does not draw.
+  const positions = new Map<string, BoxPosition>()
+  for (const raw of Array.isArray(d.positions) ? d.positions.slice(0, MAX_POSITIONS) : []) {
+    const p = (raw ?? {}) as Record<string, unknown>
+    const { view, node, dx, dy } = p
+    if (!isKey(view) || !isKey(node)) continue
+    if (![dx, dy].every((v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_OFFSET)) continue
+    const [x, y] = [Math.round(dx as number), Math.round(dy as number)]
+    if (!x && !y) continue
+    const e = { view, node, dx: x, dy: y }
+    positions.delete(positionKey(e)) // the last entry wins, in file order
+    positions.set(positionKey(e), e)
+  }
+  return {
+    annotations: { sites, links, ips: [...ips.values()], positions: [...positions.values()] },
+    contract: typeof d.contract === 'number' ? d.contract : undefined,
+  }
 }
 
 // --- applying to the model ---------------------------------------------------------
@@ -170,8 +232,9 @@ export interface Applied {
  * Adds sites as external nodes and links as `manual` edges. VPN tunnels to a
  * host a site lists end at the site instead of an anonymous external node.
  */
-export function applyAnnotations(model: Model, a: Annotations): Applied {
-  if (isEmpty(a)) return { model, dangling: [], staleIps: [] }
+export function applyAnnotations(model: Model, a: Pick<Annotations, 'sites' | 'links' | 'ips'>): Applied {
+  // Box positions are the diagram's business; the model does not change with them.
+  if (!a.sites.length && !a.links.length && !a.ips.length) return { model, dangling: [], staleIps: [] }
   const nodes = new Map(model.nodes)
   const siteOfHost = new Map<string, string>()
   for (const s of a.sites) {

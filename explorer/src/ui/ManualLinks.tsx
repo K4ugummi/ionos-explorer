@@ -93,23 +93,12 @@ export function ManualLinks({ model, node, onSelect }: { model: Model; node: Gra
 function AddLink({ model, from, onDone }: { model: Model; from: GraphNode; onDone: () => void }) {
   const ctx = useContext(AnnotationsContext)!
   const [mode, setMode] = useState<'resource' | 'site'>('resource')
-  const [query, setQuery] = useState('')
   const [target, setTarget] = useState<GraphNode>()
   const [siteName, setSiteName] = useState('')
   const [siteHosts, setSiteHosts] = useState('')
   const [label, setLabel] = useState('')
   const [note, setNote] = useState('')
 
-  const results = useMemo(
-    () =>
-      query.trim()
-        ? search(model, query, 60)
-            .hits.map((h) => h.node)
-            .filter((n) => LINKABLE.has(n.kind) && n.id !== from.id)
-            .slice(0, 8)
-        : [],
-    [model, query, from.id],
-  )
   const ready = mode === 'resource' ? !!target : !!siteName.trim()
 
   const submit = () => {
@@ -155,29 +144,13 @@ function AddLink({ model, from, onDone }: { model: Model; from: GraphNode; onDon
             </button>
           </div>
         ) : (
-          <>
-            <input
-              autoFocus
-              type="search"
-              placeholder="Search a server, gateway, datacenter or site…"
-              aria-label="Link target"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {results.length > 0 && (
-              <ul className="rel-list">
-                {results.map((n) => (
-                  <li key={n.id}>
-                    <button type="button" onClick={() => setTarget(n)}>
-                      <KindBadge kind={n.kind} />
-                      <span>{n.name}</span>
-                      <span className="ctx">{nodeContext(model, n)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
+          <ResourcePicker
+            model={model}
+            accept={(n) => LINKABLE.has(n.kind) && n.id !== from.id}
+            placeholder="Search a server, gateway, datacenter or site…"
+            label="Link target"
+            onPick={setTarget}
+          />
         )
       ) : (
         <>
@@ -209,5 +182,71 @@ function AddLink({ model, from, onDone }: { model: Model; from: GraphNode; onDon
       </div>
       <p className="hint">Stored in this browser only. Export the file on the Overview page to keep or share it.</p>
     </form>
+  )
+}
+
+/**
+ * A search box that lists matching resources to pick one (the first eight
+ * that `accept` lets through). Enter picks the first; Escape calls `onCancel`.
+ */
+export function ResourcePicker({
+  model,
+  accept,
+  placeholder,
+  label,
+  onPick,
+  onCancel,
+}: {
+  model: Model
+  accept: (n: GraphNode) => boolean
+  placeholder: string
+  label: string
+  onPick: (n: GraphNode) => void
+  onCancel?: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const results = useMemo(
+    () =>
+      query.trim()
+        ? search(model, query, 60)
+            .hits.map((h) => h.node)
+            .filter(accept)
+            .slice(0, 8)
+        : [],
+    [model, query, accept],
+  )
+  return (
+    <>
+      <input
+        autoFocus
+        type="search"
+        placeholder={placeholder}
+        aria-label={label}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && results[0]) {
+            e.preventDefault()
+            onPick(results[0])
+          } else if (e.key === 'Escape' && onCancel) {
+            e.preventDefault()
+            onCancel()
+          }
+        }}
+      />
+      {results.length > 0 && (
+        <ul className="rel-list">
+          {results.map((n) => (
+            <li key={n.id}>
+              <button type="button" onClick={() => onPick(n)}>
+                <KindBadge kind={n.kind} />
+                <span>{n.name}</span>
+                <span className="ctx">{nodeContext(model, n)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }

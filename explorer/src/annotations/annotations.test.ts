@@ -8,13 +8,19 @@ import {
   addSite,
   applyAnnotations,
   EMPTY,
+  isEmpty,
+  loadStored,
   merge,
   normalizeIP,
   parse,
+  positionsOf,
   removeIpFix,
   removeSite,
+  resetPositions,
+  saveStored,
   serialize,
   setIpFix,
+  setPosition,
   siteNodeId,
 } from './annotations'
 
@@ -173,5 +179,96 @@ describe('IP corrections', async () => {
     expect(off.every((n) => n.dhcp === false)).toBe(true)
     expect(search(m, 'kind:server dhcp:off').hits.map((h) => h.node.name)).toContain('dr-fw-01')
     expect(search(m, 'kind:server dhcp:off').hits.map((h) => h.node.name)).not.toContain('bastion-01')
+  })
+})
+
+describe('box positions', async () => {
+  const m = await fixtureModel()
+  const fra = named(m, 'fra-prod-core').id
+  const moved = setPosition(setPosition(EMPTY, { view: 'contract', node: fra, dx: 120.4, dy: -40 }), {
+    view: `dc:${fra}`,
+    node: 'grp:fra-core-web|lan-a,lan-b',
+    dx: 0,
+    dy: 300,
+  })
+
+  it('stores offsets per view and box, rounded; moving back to 0, 0 forgets one', () => {
+    expect(moved.positions).toEqual([
+      { view: 'contract', node: fra, dx: 120, dy: -40 },
+      { view: `dc:${fra}`, node: 'grp:fra-core-web|lan-a,lan-b', dx: 0, dy: 300 },
+    ])
+    expect(isEmpty(moved)).toBe(false)
+    // Moving it again replaces the entry.
+    expect(setPosition(moved, { view: 'contract', node: fra, dx: 5, dy: 5 }).positions.filter((p) => p.view === 'contract')).toEqual([
+      { view: 'contract', node: fra, dx: 5, dy: 5 },
+    ])
+    expect(setPosition(moved, { view: 'contract', node: fra, dx: 0.3, dy: 0 }).positions).toHaveLength(1)
+    expect([...positionsOf(moved.positions, 'contract')]).toEqual([[fra, { dx: 120, dy: -40 }]])
+    expect(positionsOf(moved.positions, 'dc:other').size).toBe(0)
+    expect(resetPositions(moved, 'contract').positions.map((p) => p.view)).toEqual([`dc:${fra}`])
+    expect(resetPositions(moved)).toEqual(EMPTY)
+  })
+
+  it('leaves the model alone', () => {
+    expect(applyAnnotations(m, moved).model).toBe(m)
+  })
+
+  it('round-trips through a file and drops junk; unknown views and boxes are kept', () => {
+    const kept = setPosition(moved, { view: 'dc:not-in-this-snapshot', node: 'gone', dx: 1, dy: 2 })
+    expect(parse(serialize(kept, 31812345)).annotations).toEqual(kept)
+    const cleaned = parse({
+      format: 'ionos-explorer-annotations',
+      version: 1,
+      positions: [
+        { view: 'contract', node: 'loc:de/fra', dx: 10.6, dy: '5' },
+        { view: 'contract', node: 'loc:de/fra', dx: 10.6, dy: -3.2 },
+        { view: 'contract', node: 'a\nb', dx: 1, dy: 1 },
+        { view: '', node: 'x', dx: 1, dy: 1 },
+        { view: 'contract', node: 'x', dx: Infinity, dy: 1 },
+        { view: 'contract', node: 'x', dx: 2e6, dy: 1 },
+        { view: 'contract', node: 'x', dx: 0, dy: 0.2 },
+        { view: 'contract', node: 'grp:Unattached volumes', dx: -1, dy: 0 },
+        { view: 'contract', node: 'loc:de/fra', dx: 7, dy: 7 },
+        null,
+        'x',
+      ],
+    }).annotations
+    // The last entry for a box wins.
+    expect(cleaned.positions).toEqual([
+      { view: 'contract', node: 'grp:Unattached volumes', dx: -1, dy: 0 },
+      { view: 'contract', node: 'loc:de/fra', dx: 7, dy: 7 },
+    ])
+    // Files from before positions still load.
+    expect(parse({ format: 'ionos-explorer-annotations', version: 1 }).annotations.positions).toEqual([])
+    expect(parse({ format: 'ionos-explorer-annotations', version: 1, positions: { view: 'contract' } }).annotations.positions).toEqual([])
+  })
+
+  it('merges by view and box, the imported file winning', () => {
+    const theirs = setPosition(EMPTY, { view: 'contract', node: fra, dx: -7, dy: 9 })
+    const both = merge(moved, setPosition(theirs, { view: 'contract', node: 'loc:de/txl', dx: 1, dy: 1 }))
+    expect(both.positions).toEqual([
+      { view: 'contract', node: fra, dx: -7, dy: 9 },
+      { view: `dc:${fra}`, node: 'grp:fra-core-web|lan-a,lan-b', dx: 0, dy: 300 },
+      { view: 'contract', node: 'loc:de/txl', dx: 1, dy: 1 },
+    ])
+  })
+
+  it('is kept in the browser even without links', () => {
+    const store = new Map<string, string>()
+    const fake = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    }
+    const real = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: fake, configurable: true })
+    try {
+      saveStored('k', moved)
+      expect(loadStored('k')).toEqual(moved)
+      saveStored('k', resetPositions(moved))
+      expect(store.has('k')).toBe(false)
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: real, configurable: true })
+    }
   })
 })
