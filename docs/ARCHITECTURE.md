@@ -429,9 +429,11 @@ edits differ.
 
 ## Open-source readiness (before publishing)
 
-- License: undecided (Apache-2.0 or MIT are the usual choices for tooling).
-  Third-party licenses to carry in a NOTICE file: elkjs is EPL-2.0 (shipped
-  unmodified as a separate worker file), the rest of the bundle is MIT/ISC/BSD.
+- License: AGPL-3.0-only (`LICENSE`, decided 2026-10-15). Third-party
+  licenses are listed in `NOTICE`: elkjs is "EPL-2.0 OR GPL-3.0-or-later"
+  and used under the GPL (shipped unmodified as a separate worker file), the
+  rest of the bundle and the Go modules are MIT/BSD. New dependencies must
+  be AGPL-compatible (no EPL-only, no proprietary).
 - Name: "IONOS" is a trademark. Prefer a neutral name with a "not affiliated
   with IONOS" note, or ask IONOS for permission.
 - Go module path: currently the local `ionos-explorer/exporter`; switch to

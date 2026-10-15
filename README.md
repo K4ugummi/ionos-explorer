@@ -109,3 +109,12 @@ cd exporter
 go run ./cmd/ionos-fixture -o /tmp/demo.ionx.age --recipient age1...
 go run ./cmd/ionos-fixture -o /tmp/demo.ionx.age --passphrase-file pass.txt
 ```
+
+## License
+
+Copyright (C) 2026 Stephan Schauerte. Licensed under the
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`): you may
+use, change and share it; if you distribute a changed version or let others
+use it over a network, you must publish its source under the same licence.
+Third-party components and their licences are listed in [NOTICE](NOTICE).
+Not affiliated with or endorsed by IONOS SE.

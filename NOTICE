@@ -1,0 +1,30 @@
+IONOS Explorer
+Copyright (C) 2026 Stephan Schauerte
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 (see LICENSE).
+
+Not affiliated with or endorsed by IONOS SE. "IONOS" is a trademark of
+its owner and is used here only to name the cloud the tool reads.
+
+Third-party software shipped in the explorer's build
+----------------------------------------------------
+
+- elkjs (Eclipse Layout Kernel for JavaScript), EPL-2.0 OR GPL-3.0-or-later,
+  https://github.com/kieler/elkjs. Used here under GPL-3.0-or-later; shipped
+  unmodified as a separate web worker file (elk-worker.min.js).
+- React, React DOM: MIT, https://github.com/facebook/react
+- React Flow (@xyflow/react): MIT, https://github.com/xyflow/xyflow
+- age-encryption (typage): BSD-3-Clause, https://github.com/FiloSottile/typage
+- fflate: MIT, https://github.com/101arrowz/fflate
+- @noble/hashes: MIT, https://github.com/paulmillr/noble-hashes
+
+Third-party Go modules in the exporter
+--------------------------------------
+
+- filippo.io/age, filippo.io/hpke: BSD-3-Clause
+- golang.org/x/crypto, golang.org/x/sys: BSD-3-Clause
+
+Each package's own licence text is in its source distribution
+(explorer/node_modules/<package>/LICENSE, or the Go module cache).
