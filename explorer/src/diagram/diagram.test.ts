@@ -196,6 +196,11 @@ describe('layout', async () => {
     const idle = toFlow(l, d, undefined, null)
     expect(idle.edges.filter((e) => e.data?.kind === 'target').every((e) => e.hidden)).toBe(true)
     expect(idle.nodes.some((n) => n.data.dim)).toBe(false)
+
+    // Lines at the selection keep their label when zoomed out (detail by zoom); no others.
+    expect(flow.edges.filter((e) => e.data!.hl).every((e) => e.source === nlb || e.target === nlb)).toBe(true)
+    expect(flow.edges.some((e) => e.data!.hl)).toBe(true)
+    expect(idle.edges.some((e) => e.data!.hl)).toBe(false)
   })
 })
 

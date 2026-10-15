@@ -57,9 +57,15 @@ a LAN that only leads to a Cross Connect becomes a line from the router to
 the Cross Connect ("+N LANs only here" unfolds them). Groups of more than
 eight servers show six and a "+N more" box that expands them; the selected
 server, appliances and changes since a compared snapshot are always shown,
-and search hits among the hidden ones are counted on the box. Links the
-API cannot see, such as an IPsec tunnel between two Cisco VMs, can be
-added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
+and search hits among the hidden ones are counted on the box. Zoomed out,
+the diagram shows less: below 60 % no subtitles or IPs, below 30 % only
+names; the selection, its neighbours and search hits keep their details.
+"Layers" in the diagram bar hides load balancers, gateways, managed
+services, tunnels and links, leftover groups or Cross Connect peers (the
+layout closes the gap), or dims all but appliances or, when comparing, all
+but changes; the choice is remembered in this browser.
+Links the API cannot see, such as an IPsec tunnel between two Cisco VMs, can
+be added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
 keeps a record that may be outdated (`dhcp:off` finds them), and a
 correction, entered per NIC or pasted as a list on the Overview page, is
 shown next to the IONOS value. Links and corrections stay in your browser;

@@ -6,21 +6,26 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStoreApi,
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { CompareContext } from '../diff/context'
 import type { Model } from '../model/types'
 import { contractDiagram, datacenterDiagram } from './build'
 import { elk } from './elk'
+import { useDismiss } from './dismiss'
 import { legendFits, refitOnResize, type Box, type Framing } from './framing'
+import { emphasized, loadLayers, saveLayers, type Layers } from './layers'
+import { LayersMenu } from './LayersMenu'
+import { lodFor, type Lod } from './lod'
 import { absolutePositions, layoutCache, layoutDiagram, layoutSignature, withData } from './layout'
 import { DiagramActions, toFlow, type FlowEdge, type FlowNode } from './flow'
 import { midpoint } from './geometry'
 import { BoxNode, DcNode, ExternalNode, GroupNode, InternetNode, MoreNode, PeerNode, RoutedEdge } from './render'
-import type { Diagram, Layout } from './types'
+import type { Diagram, DiagramEdgeKind, Layout } from './types'
 
 export interface DiagramViewProps {
   model: Model
@@ -93,18 +98,31 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
   // Search matches are not: they never change the layout, a collapsed
   // group counts them on its "+N more" box instead.
   const [opened, setOpened] = useState<ReadonlyMap<string, ReadonlySet<string>>>(new Map())
+  // What the diagram shows, per viewer (this browser). Hidden layers are
+  // part of the diagram and so of the layout; the emphasis only dims.
+  const [layers, setLayers] = useState<Layers>(loadLayers)
+  const diff = useContext(CompareContext)
   const viewKey = dcId ? `dc:${dcId}` : 'contract'
   const expanded = opened.get(viewKey) ?? NOTHING_OPEN
   // Only a datacenter view depends on the selection: a selected member of a collapsed group is shown.
   const focus = dcId ? selectedId : undefined
   const diagram = useMemo(
-    () => (dcId ? datacenterDiagram(model, dcId, { expanded, selected: focus }) : contractDiagram(model)),
-    [model, dcId, expanded, focus],
+    () =>
+      dcId
+        ? datacenterDiagram(model, dcId, { expanded, selected: focus, hidden: layers.hidden })
+        : contractDiagram(model, { hidden: layers.hidden }),
+    [model, dcId, expanded, focus, layers.hidden],
   )
+  const bright = useMemo(() => emphasized(model, layers.emphasis, !!diff), [model, layers.emphasis, diff])
+  // The legend lists only the lines this view draws (a peer line looks like a Cross Connect).
+  const kinds = useMemo(() => new Set(diagram.edges.map((e) => (e.kind === 'peer' ? 'cross-connect' : e.kind))), [diagram])
   const state = useLayout(diagram)
   const layout = state.layout
   const anchor = selectedId ? diagram.anchors.get(selectedId) : undefined
-  const flow = useMemo(() => (layout ? toFlow(layout, diagram, anchor, matches) : undefined), [layout, diagram, anchor, matches])
+  const flow = useMemo(
+    () => (layout ? toFlow(layout, diagram, anchor, matches, bright) : undefined),
+    [layout, diagram, anchor, matches, bright],
+  )
   const abs = useMemo(() => (layout ? absolutePositions(layout) : undefined), [layout])
   const rf = useReactFlow()
   const box = useRef<HTMLDivElement>(null)
@@ -149,6 +167,7 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
   // How the canvas last placed the view itself; cleared when the user moves it.
   const framing = useRef<Framing | undefined>(undefined)
   const userMoved = () => (framing.current = undefined)
+  const lod = useLod(framing)
 
   // A new diagram: frame the selection, or everything.
   const framed = useRef<string | undefined>(undefined)
@@ -156,9 +175,10 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
     if (!flow || framed.current === layout?.key) return
     framed.current = layout?.key
     requestAnimationFrame(() => {
+      // Set first: an unanimated move reaches the level of detail at once.
+      framing.current = target ? { kind: 'center', target, zoom: 1 } : { kind: 'fit' }
       if (target) centerOn(target, 1)
       else void rf.fitView({ ...fit, duration: 0 })
-      framing.current = target ? { kind: 'center', target, zoom: 1 } : { kind: 'fit' }
     })
     // centerOn reads the latest viewport; only the diagram change matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -178,8 +198,8 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
     brought.current = anchor
     if (inView(target)) return
     const z = Math.max(rf.getViewport().zoom, 0.7)
-    centerOn(target, z)
     framing.current = { kind: 'center', target, zoom: z }
+    centerOn(target, z)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target])
 
@@ -191,10 +211,23 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
     if (!b || inView(b)) return
     const { width, height } = free()
     const z = Math.min(rf.getViewport().zoom, (width - 48) / b.width, (height - 48) / b.height)
-    centerOn(b, z)
     framing.current = { kind: 'center', target: b, zoom: z }
+    centerOn(b, z)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal, state.fresh, abs])
+
+  // Layers switched on or off: once laid out, frame the view again if the canvas framed it.
+  const [relaid, setRelaid] = useState(false)
+  const changeLayers = (next: Layers) => {
+    if (next.hidden !== layers.hidden) setRelaid(true)
+    setLayers(next)
+    saveLayers(next)
+  }
+  useEffect(() => {
+    if (!relaid || !state.fresh) return
+    setRelaid(false)
+    requestAnimationFrame(() => refit.current())
+  }, [relaid, state.fresh, layout])
 
   /** The part of the canvas the drawer leaves free. */
   function free() {
@@ -257,10 +290,11 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
               <strong>All datacenters</strong>
             )}
           </nav>
-          <Legend datacenter={!!dc} />
+          <Legend datacenter={!!dc} kinds={kinds} />
+          <LayersMenu layers={layers} onChange={changeLayers} datacenter={!!dc} comparing={!!diff} />
         </div>
         <div
-          className="dg-canvas"
+          className={`dg-canvas lod-${lod}`}
           ref={box}
           // The minimap moves the view without telling onMoveStart who did it.
           onPointerDownCapture={(e) => (e.target as Element).closest('.react-flow__minimap') && userMoved()}
@@ -319,10 +353,23 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
 }
 
 /**
+ * The level of detail for the current zoom. Only a change of level renders
+ * the canvas again (a class on it); the boxes restyle in CSS. Hysteresis
+ * only while the user zooms: a view the canvas framed itself (`framing` is
+ * set) gets the plain level of its zoom, so a fitted view always looks the same.
+ */
+function useLod(framing: RefObject<Framing | undefined>) {
+  const store = useStoreApi()
+  const [lod, setLod] = useState<Lod>(() => lodFor(store.getState().transform[2]))
+  useEffect(() => store.subscribe((s) => setLod((prev) => lodFor(s.transform[2], framing.current ? undefined : prev))), [store, framing])
+  return lod
+}
+
+/**
  * The legend sits in the bar while it fits on one line next to the
  * breadcrumbs; otherwise a "Legend" button opens it over the canvas.
  */
-function Legend({ datacenter }: { datacenter: boolean }) {
+function Legend({ datacenter, kinds }: { datacenter: boolean; kinds: ReadonlySet<DiagramEdgeKind> }) {
   const slot = useRef<HTMLDivElement>(null)
   const measure = useRef<HTMLUListElement>(null)
   const toggle = useRef<HTMLButtonElement>(null)
@@ -341,30 +388,17 @@ function Legend({ datacenter }: { datacenter: boolean }) {
     return () => observer.disconnect()
   }, [])
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setOpen(false)
-      toggle.current?.focus()
-    }
-    const onPointer = (e: PointerEvent) => !slot.current?.contains(e.target as Node) && setOpen(false)
-    document.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onPointer)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onPointer)
-    }
-  }, [open])
+  const close = useCallback(() => setOpen(false), [])
+  useDismiss(open, close, slot, toggle)
 
   return (
     <div className="dg-legend-slot" ref={slot}>
       <ul className="dg-legend dg-legend-measure" ref={measure} aria-hidden>
-        <LegendItems datacenter={datacenter} />
+        <LegendItems datacenter={datacenter} kinds={kinds} />
       </ul>
       {fits ? (
         <ul className="dg-legend" aria-label="Legend">
-          <LegendItems datacenter={datacenter} />
+          <LegendItems datacenter={datacenter} kinds={kinds} />
         </ul>
       ) : (
         <>
@@ -379,7 +413,7 @@ function Legend({ datacenter }: { datacenter: boolean }) {
           </button>
           {open && (
             <ul className="dg-legend dg-legend-pop" id={id} aria-label="Legend">
-              <LegendItems datacenter={datacenter} />
+              <LegendItems datacenter={datacenter} kinds={kinds} />
             </ul>
           )}
         </>
@@ -388,9 +422,9 @@ function Legend({ datacenter }: { datacenter: boolean }) {
   )
 }
 
-function LegendItems({ datacenter }: { datacenter: boolean }) {
+function LegendItems({ datacenter, kinds }: { datacenter: boolean; kinds: ReadonlySet<DiagramEdgeKind> }) {
   const diff = useContext(CompareContext)
-  const items: [string, string][] = datacenter
+  const items: [DiagramEdgeKind, string][] = datacenter
     ? [
         ['lan', 'LAN attachment'],
         ['internet', 'Internet'],
@@ -406,14 +440,16 @@ function LegendItems({ datacenter }: { datacenter: boolean }) {
       ]
   return (
     <>
-      {items.map(([kind, label]) => (
-        <li key={kind}>
-          <svg width="26" height="8" aria-hidden>
-            <line x1="1" y1="4" x2="25" y2="4" className={`dg-legend-line ${kind}`} />
-          </svg>
-          {label}
-        </li>
-      ))}
+      {items
+        .filter(([kind]) => kinds.has(kind))
+        .map(([kind, label]) => (
+          <li key={kind}>
+            <svg width="26" height="8" aria-hidden>
+              <line x1="1" y1="4" x2="25" y2="4" className={`dg-legend-line ${kind}`} />
+            </svg>
+            {label}
+          </li>
+        ))}
       {diff && (
         <>
           <li>

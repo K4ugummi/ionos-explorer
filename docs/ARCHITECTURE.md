@@ -182,7 +182,42 @@ Modules:
   box or a new link between siblings lays a view out again. Each view is
   fitted when it opens and again when the canvas changes size, unless the
   user has panned or zoomed since. The legend sits in the bar while it fits
-  on one line, otherwise behind a "Legend" button. React Flow, the ELK
+  on one line, otherwise behind a "Legend" button.
+
+  *Detail by zoom* (`lod.ts`): the zoom sets one of three classes on the
+  canvas, `lod-near` (≥ 0.6, everything), `lod-mid` (0.3–0.6: titles,
+  appliance tags, pills on datacenter cards, "N LANs" on routers and the
+  labels of Cross Connect, tunnel and manual-link lines; no subtitles, IPs,
+  "via" markers or buttons) and `lod-far` (< 0.3: titles only, larger and
+  centred; group titles, change bars and the "+2 ~5 −1" pill of a card
+  stay, change and router bars get thicker). The rest is CSS, so zooming
+  never re-renders the boxes or lays the view out again; only a change of
+  level renders the canvas once. While the user zooms, a level holds 10 %
+  past its threshold (`lodFor(zoom, previous)`), so it does not flicker; a
+  view the canvas framed itself gets the plain level of its zoom, so a
+  fitted view always looks the same. Boxes marked `full` (selected, next to
+  the selection, search hits) and the box with keyboard focus keep all their
+  detail; buttons in other boxes are hidden from sight only, so Tab still
+  reaches them and shows them.
+
+  *Layers* (`layers.ts`, the "Layers" button in the bar, `LayersMenu.tsx`):
+  switches for load balancers (with their target lines), NAT and VPN
+  gateways (with the tunnels drawn from them), managed services (node
+  pools, PostgreSQL), VPN tunnels and manual links, the leftover groups
+  (Security Groups, unattached volumes, other resources) and Cross Connect
+  peers. A hidden layer goes into the diagram options (`options.hidden`)
+  and is left out when the diagram is built, so it is part of the layout
+  signature and the layout uses the room; LAN tiers and folded LANs are
+  still worked out with the hidden resources, so the rest keeps its shape.
+  The internet, peer datacenters and endpoints outside that were there only
+  for removed lines go with them. The contract view honours only "VPN
+  tunnels and manual links" (with the "Outside the contract" group); the
+  menu greys out the others there. Two emphasis modes, "Only appliances"
+  and "Only changes" (with a comparison loaded), dim everything else in
+  `toFlow` like a search does, without a new layout. The choice is kept per
+  browser in `localStorage` (`ionos-explorer:layers`); a changed layer
+  reframes a view the canvas had framed. The legend lists only the line
+  kinds the current diagram draws. React Flow, the ELK
   client and the canvas are a chunk of their own, fetched when the user
   starts opening a snapshot (first click, key or drag on the open screen);
   the 1.6 MB ELK worker is fetched on the first layout.

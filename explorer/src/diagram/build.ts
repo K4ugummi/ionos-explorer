@@ -2,6 +2,7 @@ import { countsText } from '../diff/diff'
 import { MANY_LANS } from '../model/appliances'
 import { KINDS, subtypeLabel } from '../model/kinds'
 import type { GraphNode, Model, NodeKind } from '../model/types'
+import { hiddenKind, type Layer } from './layers'
 import type { Diagram, DiagramEdge, DiagramNode, NodeData } from './types'
 
 // Fixed node sizes; the renderer uses the same numbers.
@@ -51,6 +52,8 @@ const isInactive = (n: GraphNode) => !!n.state && !ACTIVE_STATES.has(n.state.toU
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 const fact = (n: GraphNode, label: string) => n.facts.find((f) => f.label === label)?.value
+
+const NO_LAYERS: ReadonlySet<Layer> = new Set()
 
 function base(n: GraphNode): NodeData {
   const a = n.appliance
@@ -151,9 +154,11 @@ const DC_PILLS: [NodeKind, string, string?][] = [
 /**
  * All datacenters, grouped by location, linked by their Cross Connects. A
  * Cross Connect between exactly two datacenters is a line; any other number
- * of peers gets a hub node so the picture stays readable.
+ * of peers gets a hub node so the picture stays readable. Of the layers only
+ * `links` applies here: tunnels, manual links and the endpoints outside.
  */
-export function contractDiagram(model: Model): Diagram {
+export function contractDiagram(model: Model, options: Pick<DiagramOptions, 'hidden'> = {}): Diagram {
+  const withLinks = !options.hidden?.has('links')
   const nodes: DiagramNode[] = []
   const edges: DiagramEdge[] = []
   const anchors = new Map<string, string>()
@@ -248,7 +253,7 @@ export function contractDiagram(model: Model): Diagram {
   }
 
   // Everything outside the contract: VPN remote hosts and sites.
-  const externals = nodesOf(model, 'external').sort(byName)
+  const externals = withLinks ? nodesOf(model, 'external').sort(byName) : []
   if (externals.length) {
     const gid = 'group:external'
     nodes.push({
@@ -267,7 +272,7 @@ export function contractDiagram(model: Model): Diagram {
   // one line per pair and kind.
   const end = (n: GraphNode) => (n.kind === 'external' ? n.id : n.kind === 'datacenter' ? n.id : n.dcId)
   const pairs = new Map<string, { kind: 'tunnel' | 'manual'; a: string; b: string; items: { label?: string; ref: string; id: string }[] }>()
-  for (const l of links(model)) {
+  for (const l of withLinks ? links(model) : []) {
     const [a, b] = [end(l.from), end(l.to)]
     if (!a || !b || a === b || !anchors.has(a) || !anchors.has(b)) continue
     const [x, y] = [a, b].sort()
@@ -331,6 +336,12 @@ export interface DiagramOptions {
   expanded?: ReadonlySet<string>
   /** The selected model node; inside a collapsed group its server is shown anyway. */
   selected?: string
+  /**
+   * Layers the user switched off (`layers.ts`). Their boxes and lines are
+   * left out; tiers and folded LANs are worked out with them, so the rest
+   * of the picture keeps its shape.
+   */
+  hidden?: ReadonlySet<Layer>
 }
 
 /**
@@ -416,6 +427,7 @@ function foldedLans(lans: GraphNode[], devices: Device[], boxOf: (d: Device) => 
  */
 export function datacenterDiagram(model: Model, dcId: string, options: DiagramOptions = {}): Diagram {
   const expanded = options.expanded ?? new Set<string>()
+  const hide = options.hidden ?? NO_LAYERS
   const dc = model.nodes.get(dcId)
   const nodes: DiagramNode[] = []
   const edges: DiagramEdge[] = []
@@ -490,8 +502,12 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   const rank = (id: string) => level.get(id) ?? 0
   for (const d of devices) if (!d.ordered) d.lans.sort((a, b) => rank(a.id) - rank(b.id) || degree(b.id) - degree(a.id))
 
+  // Resources in a hidden layer still shape the tiers above; from here on they are left out.
+  const off = (d: Device) => hiddenKind(hide, d.node.kind)
+  const shownDevices = devices.filter((d) => !off(d))
+
   // Internet.
-  const hasInternet = lans.some((l) => l.subtype === 'public') || devices.some((d) => edgeDevice(d.node) && d.node.ips.length)
+  const hasInternet = lans.some((l) => l.subtype === 'public') || shownDevices.some((d) => edgeDevice(d.node) && d.node.ips.length)
   if (hasInternet) nodes.push({ id: 'internet', type: 'internet', ...SIZE.internet, data: { title: 'Internet' } })
 
   // Servers with the same name stem and LANs collapse into one group box.
@@ -530,7 +546,10 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   // LANs; wider when busy so they read like a bus.
   for (const lan of lans) {
     if (folded.has(lan.id)) continue
-    const links = degree(lan.id) + [...pccEdges.values()].filter((l) => l.includes(lan.id)).length + (lan.subtype === 'public' ? 1 : 0)
+    const links =
+      shownDevices.filter((d) => d.lans.some((l) => l.id === lan.id)).length +
+      [...pccEdges.values()].filter((l) => l.includes(lan.id)).length +
+      (lan.subtype === 'public' ? 1 : 0)
     nodes.push({
       id: lan.id,
       type: 'lan',
@@ -607,7 +626,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
     for (const m of members) boxOf.set(m.node.id, gid)
   }
 
-  for (const d of devices) {
+  for (const d of shownDevices) {
     const n = d.node
     if (boxOf.has(n.id)) continue
     if (isRouter(d)) {
@@ -624,11 +643,12 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
     boxOf.set(n.id, n.id)
   }
 
-  const others = devices.filter((d) => !isRouter(d))
+  // A LAN only a hidden resource connects gets its router's line at rest.
+  const others = shownDevices.filter((d) => !isRouter(d))
   const routers = devices.filter(isRouter).map((d) => ({ ...d, lans: shown(d) }))
   const onDemand = routerLines(routers, others, boxOf)
   const via = new Map<string, Set<string>>() // LAN → routers that reach it only on demand
-  for (const d of devices) {
+  for (const d of shownDevices) {
     const n = d.node
     const box = boxOf.get(n.id)!
     const grouped = box !== n.id
@@ -652,7 +672,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   }
 
   // Load balancer targets: drawn only while the balancer or a target is selected.
-  for (const d of devices) {
+  for (const d of shownDevices) {
     if (d.node.kind !== 'nlb' && d.node.kind !== 'alb') continue
     const targets = out(d.node).filter((e) => e.kind === 'target')
     for (const fw of out(d.node).filter((e) => e.kind === 'forwards-to')) {
@@ -713,7 +733,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
       .map((id) => model.nodes.get(id))
       .filter((n): n is GraphNode => !!n)
       .sort(byName)
-    for (const peer of peerDcs) {
+    for (const peer of hide.has('peers') ? [] : peerDcs) {
       const pid = peerNode(peer)
       addEdge({
         source: hub,
@@ -737,7 +757,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
     ['Other resources', kids.filter((k) => k.kind === 'other')],
   ]
   for (const [title, list] of leftovers) {
-    if (!list.length) continue
+    if (!list.length || hide.has('leftovers')) continue
     const gid = `grp:${title}`
     const { shown, more, collapsible } = collapse(gid, list, 'resource')
     nodes.push({ id: gid, type: 'group', layout: PACKED, data: { title, subtitle: plural(list.length, 'resource'), collapsible } })
@@ -782,7 +802,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
     const other = model.nodes.get(n.kind === 'datacenter' ? n.id : (n.dcId ?? ''))
     return other?.kind === 'datacenter' && other.id !== dcId ? peerNode(other) : undefined
   }
-  for (const l of links(model)) {
+  for (const l of hide.has('links') ? [] : links(model)) {
     const [a, b] = [local(l.from), local(l.to)]
     if (!a && !b) continue
     const [source, target] = a && b ? [a, b] : a ? [remote(l.to), a] : [remote(l.from), b]

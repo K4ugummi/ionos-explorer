@@ -747,6 +747,36 @@ button.pill {
   color: var(--fg);
 }
 
+/* Short of room, the datacenter name gives way (ellipsis) rather than the buttons. */
+.dg-bar .crumbs {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.dg-bar .crumbs strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dg-bar .crumbs > :not(strong) {
+  flex: none;
+}
+
+@media (max-width: 520px) {
+  .dg-bar {
+    gap: 12px;
+  }
+
+  .dg-bar .crumbs .pill {
+    display: none;
+  }
+
+  .dg-bar .dg-layers {
+    margin-left: 0;
+  }
+}
+
 /* The room right of the breadcrumbs; the legend shows inline only if it fits on one line. */
 .dg-legend-slot {
   position: relative;
@@ -754,6 +784,11 @@ button.pill {
   min-width: 0;
   display: flex;
   align-items: center;
+}
+
+/* Collapsed to its button, it keeps at least the button's width (the breadcrumbs give way). */
+.dg-legend-slot:has(> .dg-legend-toggle) {
+  min-width: max-content;
 }
 
 .dg-legend {
@@ -787,12 +822,12 @@ button.pill {
   margin-left: auto;
 }
 
-.dg-legend-pop {
+/* Popovers hanging from the bar: the legend, the layers. */
+.dg-legend-pop,
+.dg-layers-pop {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
-  flex-direction: column;
-  gap: 7px;
   width: max-content;
   max-width: calc(100vw - 32px);
   max-height: 60vh;
@@ -802,6 +837,11 @@ button.pill {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.dg-legend-pop {
+  flex-direction: column;
+  gap: 7px;
 }
 
 .dg-legend-pop li {
@@ -819,6 +859,78 @@ button.pill {
 .dg-legend-line {
   stroke: var(--edge);
   stroke-width: 2;
+}
+
+/* "Layers": what the diagram shows and emphasises */
+.dg-layers {
+  position: relative;
+  flex: none;
+  margin-left: -8px;
+}
+
+.dg-layers-count {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+  background: var(--accent);
+}
+
+.dg-layers-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.dg-layers-pop fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dg-layers-pop legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dg-layers-pop label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.dg-layers-pop label:has(input:disabled) {
+  color: var(--faint);
+  cursor: default;
+}
+
+.dg-layers-pop input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.dg-layers-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--faint);
+  max-width: 260px;
 }
 
 /* ---------- diagram nodes ---------- */
@@ -1328,6 +1440,189 @@ button.pill {
 
 .react-flow__minimap .mm-internet {
   fill: var(--edge-inet);
+}
+
+/* ---------- detail by zoom ---------- */
+
+/* `.lod-mid` (zoom 0.3–0.6) and `.lod-far` (below) on the canvas; see lod.ts.
+   What stays is drawn larger so it can still be read. A box with `.full`
+   (selected, next to the selection, a search hit) and one the keyboard is
+   on keep everything at every zoom: hidden buttons come back on focus. */
+
+.lod-mid .react-flow__node:not(:focus-visible, :has(:focus-visible)) > .dg-node:not(.full) :is(.s:not(.dg-lans-line), .dg-via),
+.lod-mid .react-flow__node:not(:focus-visible, :has(:focus-visible)) > :is(.dg-member, .dg-dc):not(.full) .kind,
+.lod-far
+  .react-flow__node:not(:focus-visible, :has(:focus-visible))
+  > .dg-node:not(.full)
+  :is(.s:not(.dg-lans-line), .dg-via, .dg-lans, .pill:not(.chg), .dg-tag, .dg-net, .kind, .dg-go) {
+  display: none;
+}
+
+/* Buttons are only hidden from sight: display: none would take them out of
+   the tab order, and focus moving from the box onto its button would land nowhere. */
+.lod-mid
+  .react-flow__node:not(:focus-visible, :has(:focus-visible))
+  > .dg-node:not(.full)
+  :is(.dg-only-at, .dg-only, .dg-collapse, .dg-foot),
+.lod-far
+  .react-flow__node:not(:focus-visible, :has(:focus-visible))
+  > .dg-node:not(.full)
+  :is(.dg-lans-line, .dg-only, .dg-collapse, .dg-foot) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.lod-mid .react-flow__node > .dg-node:not(.full) .t {
+  font-size: 17px;
+}
+
+/* The title wins the room in the head: tags and the internet marker give way first. */
+.lod-mid .react-flow__node > .dg-node:not(.full) .dg-head > :is(.dg-tag, .dg-net) {
+  flex: 0 100 auto;
+  min-width: 24px;
+  max-width: 120px;
+  font-size: 12.5px;
+}
+
+.lod-mid .react-flow__node > .dg-dc:not(.full) {
+  justify-content: center;
+  gap: 4px;
+}
+
+.lod-mid .react-flow__node > .dg-dc:not(.full) .t {
+  font-size: 20px;
+}
+
+.lod-mid .react-flow__node > .dg-dc:not(.full) .dg-pills {
+  max-height: 48px;
+  gap: 4px;
+}
+
+.lod-mid .react-flow__node > .dg-dc:not(.full) .pill {
+  font-size: 13.5px;
+}
+
+.lod-mid .react-flow__node > .dg-node:not(.full) .dg-lans-line {
+  font-size: 15px;
+}
+
+.lod-mid .dg-group-label .t,
+.lod-mid .dg-group-servers .dg-group-label .t {
+  font-size: 17px;
+}
+
+.lod-mid .dg-group-label .dg-lans {
+  font-size: 14px;
+}
+
+.lod-mid .dg-edge-label {
+  font-size: 14px;
+}
+
+/* Far: titles only, as large as the box allows, centred. */
+.lod-far .react-flow__node > .dg-node:not(.full) .t {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.lod-far .react-flow__node > .dg-node:not(.full) .dg-head {
+  justify-content: center;
+  height: 100%;
+}
+
+.lod-far .react-flow__node > .dg-dc:not(.full) {
+  justify-content: center;
+  align-items: center;
+}
+
+/* Datacenter names wrap onto a second line rather than lose their end. */
+.lod-far .react-flow__node > .dg-dc:not(.full) .t {
+  font-size: 34px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.lod-far .react-flow__node > .dg-dc:not(.full) .dg-head {
+  height: auto;
+}
+
+/* When comparing, a card keeps its "+2 ~5 −1". */
+.lod-far .react-flow__node > .dg-dc:not(.full) .dg-pills {
+  margin-top: 2px;
+  max-height: none;
+}
+
+.lod-far .react-flow__node > .dg-dc:not(.full) .pill.chg {
+  font-size: 20px;
+}
+
+.lod-far .react-flow__node > :is(.dg-member, .dg-more):not(.full) .t {
+  font-size: 20px;
+}
+
+.lod-far .react-flow__node > .dg-hub:not(.full) .t {
+  font-size: 24px;
+}
+
+.lod-far .react-flow__node > .dg-lan:not(.full) .dg-head {
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+.lod-far .dg-group-label .t {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.lod-far .dg-group-servers .dg-group-label .t {
+  font-size: 20px;
+}
+
+.lod-far .dg-edge-label:not(.hl) {
+  display: none;
+}
+
+/* Markers that carry meaning without text grow with the distance. */
+.lod-mid .dg-node:is(.chg-added, .chg-changed) {
+  padding-left: 14px;
+}
+
+.lod-far .dg-node:is(.chg-added, .chg-changed) {
+  padding-left: 22px;
+}
+
+.lod-mid .dg-node.chg-added {
+  box-shadow: inset 8px 0 0 var(--chg-added);
+}
+
+.lod-mid .dg-node.chg-changed {
+  box-shadow: inset 8px 0 0 var(--chg-changed);
+}
+
+.lod-far .dg-node.chg-added {
+  box-shadow: inset 16px 0 0 var(--chg-added);
+}
+
+.lod-far .dg-node.chg-changed {
+  box-shadow: inset 16px 0 0 var(--chg-changed);
+}
+
+.lod-far :is(.dg-router, .dg-group-router) {
+  border-bottom-width: 8px;
+}
+
+.lod-far .dg-lan {
+  border-left-width: 10px;
 }
 
 /* --- network appliances and manual links -------------------------------------- */

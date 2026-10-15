@@ -28,6 +28,8 @@ function classes(d: FlowNodeData, selected: boolean, extra = '') {
     extra,
     selected && 'selected',
     d.related && 'related',
+    // Keeps its full detail at every zoom (see lod.ts).
+    (selected || d.related || d.matches > 0) && 'full',
     d.dim && 'dim',
     d.matches > 0 && 'match',
     d.node.data.inactive && 'inactive',
@@ -214,13 +216,13 @@ export function BoxNode({ data, selected }: NodeProps<FlowNode>) {
       {d.via && <span className="dg-via">via {d.via}</span>}
       {d.subtitle && <div className="s">{d.subtitle}</div>}
       {d.lans && (
-        <div className="s">
+        <div className="s dg-lans-line">
           <Lans count={d.lans} />
           {d.only && (
-            <>
+            <span className="dg-only-at">
               {' · '}
               <OnlyHere only={d.only} />
-            </>
+            </span>
           )}
         </div>
       )}
@@ -275,7 +277,7 @@ export function RoutedEdge(props: EdgeProps<FlowEdge>) {
       {data?.showLabel && data.label && (
         <EdgeLabelRenderer>
           <div
-            className={`dg-edge-label ${data.kind}`}
+            className={`dg-edge-label ${data.kind}${data.hl ? ' hl' : ''}`}
             style={{ transform: `translate(-50%, -50%) translate(${label.x}px, ${label.y}px)` }}
           >
             {data.label}

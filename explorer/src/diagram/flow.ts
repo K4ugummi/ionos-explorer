@@ -19,6 +19,8 @@ export type FlowEdgeData = {
   /** Model node to select when the edge is clicked. */
   ref?: string
   showLabel: boolean
+  /** Touches the selection: its label stays at every zoom. */
+  hl: boolean
 }
 
 export type FlowNode = Node<FlowNodeData>
@@ -38,8 +40,18 @@ export const DiagramActions = createContext<{
 /** Lines that are hard to tell apart without their name. */
 const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
 
-/** Turns a layout into React Flow elements with selection and search state applied. */
-export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefined, matches: Set<string> | null) {
+/**
+ * Turns a layout into React Flow elements with selection and search state
+ * applied. `emphasis` (model ids, from a layer emphasis) dims everything
+ * else like a search does, without marking anything as a hit.
+ */
+export function toFlow(
+  layout: Layout,
+  diagram: Diagram,
+  anchor: string | undefined,
+  matches: Set<string> | null,
+  emphasis: Set<string> | null = null,
+) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
   const selectedNode = anchor && byId.has(anchor) ? anchor : undefined
   const selectedEdge = anchor && !selectedNode ? anchor : undefined
@@ -62,7 +74,8 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
       if (member) hiddenHits.set(a, (hiddenHits.get(a) ?? new Set()).add(member))
     }
   }
-  const lit = (id: string) => !matches || (hits.get(id) ?? 0) > 0
+  const bright = emphasis && litBy(emphasis, diagram, byId)
+  const lit = (id: string) => (!matches || (hits.get(id) ?? 0) > 0) && (!bright || bright.has(id))
 
   // Unrouted edges to a box above (a router's LAN nearer the internet) leave
   // from the top instead of looping round from the bottom.
@@ -89,13 +102,14 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
       hidden,
       selectable: !!e.ref,
       zIndex: hl ? 2 : 1,
-      className: ['dg-edge', e.kind, hl && 'hl', !(lit(e.source) || lit(e.target)) && 'dim'].filter(Boolean).join(' '),
+      className: ['dg-edge', e.kind, hl && 'hl', !(lit(e.source) || lit(e.target) || bright?.has(e.id)) && 'dim'].filter(Boolean).join(' '),
       data: {
         kind: e.kind,
         label: e.label,
         points: e.points,
         ref: e.ref,
         showLabel: (hl && e.kind !== 'target') || (ALWAYS_LABELLED.has(e.kind) && !!e.label),
+        hl,
       },
     }
   })
@@ -121,4 +135,19 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
     },
   }))
   return { nodes, edges }
+}
+
+/**
+ * The boxes that show any of these model nodes, with the groups around them,
+ * and the lines that stand for one (a Cross Connect drawn as a line).
+ */
+function litBy(ids: Set<string>, diagram: Diagram, byId: Map<string, Layout['nodes'][number]>) {
+  const out = new Set<string>()
+  for (const id of ids) {
+    const a = diagram.anchors.get(id)
+    if (!a) continue
+    if (!byId.has(a)) out.add(a)
+    for (let n = byId.get(a); n && !out.has(n.id); n = n.parent ? byId.get(n.parent) : undefined) out.add(n.id)
+  }
+  return out
 }

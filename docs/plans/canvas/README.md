@@ -11,8 +11,8 @@ Work through the packages in order; tick them off here when done.
 - [x] [01 Quick wins](01-quick-wins.md): layout cache, refit on resize, legend, lazy loading
 - [x] [02 Servers in many LANs](02-many-lan-routers.md): no more fans of 16 lines
 - [x] [03 Large groups](03-large-groups.md): collapse server groups beyond 8
-- [ ] [04 Detail by zoom](04-detail-by-zoom.md): names only when zoomed out
-- [ ] [05 Layer switches](05-layers.md): show/hide kinds of things
+- [x] [04 Detail by zoom](04-detail-by-zoom.md): names only when zoomed out
+- [x] [05 Layer switches](05-layers.md): show/hide kinds of things
 - [ ] [06 Lines between locations](06-contract-routing.md): no curves across cards
 - [ ] [07 Focus and path view](07-focus-and-path.md): what is connected, and how A reaches B
 - [ ] [08 Own positions](08-own-positions.md): drag boxes, keep them
