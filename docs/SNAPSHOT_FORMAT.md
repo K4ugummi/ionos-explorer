@@ -70,7 +70,7 @@ Lets consumers distinguish *"there are no X"* from *"we could not see X"*.
 | `api` | API id |
 | `endpoint` | path template, e.g. `/datacenters/{datacenterId}/servers` |
 | `path`, `query` | the concrete request, e.g. `depth=4` |
-| `status` | `ok`, `forbidden` (401/403), `not_found`, `error`, `skipped` |
+| `status` | `ok`, `forbidden` (401/403), `not_found`, `error`, `skipped` (excluded with `--skip`, or its parent collection was not readable; `path` is then the template) |
 | `httpStatus` | last HTTP status |
 | `file` | raw file (only for `ok`) |
 | `items`, `pages` | item count and number of pages fetched |
@@ -78,7 +78,9 @@ Lets consumers distinguish *"there are no X"* from *"we could not see X"*.
 
 ## Fetch plan (Cloud API v6)
 
-The explorer relies on these paths and depths:
+The explorer relies on these paths and depths. The authoritative list is
+`exporter/internal/endpoints` (`ionos-export --list`); a test keeps it and
+the fixture in sync.
 
 | Path | Query | Contains |
 |---|---|---|

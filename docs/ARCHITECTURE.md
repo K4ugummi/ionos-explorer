@@ -52,23 +52,42 @@ surface stays small.
 
 ### Exporter (`exporter/`, Go)
 
-- `cmd/ionos-export`: the CLI (next milestone).
+- `cmd/ionos-export`: the CLI. `--list` prints every request it can make
+  without needing credentials or network.
 - `cmd/ionos-fixture`: generates a synthetic 14-datacenter contract in the
   exact snapshot format, for development and tests.
+- `internal/endpoints`: the explicit list of endpoints the exporter calls.
+  Reviewing this file is reviewing what the tool can read.
+- `internal/httpx`: the only network access. Its transport refuses anything
+  but GET/HEAD, any host but the configured API hosts, plain http except to
+  loopback, and request bodies. Redirects are not followed. It adds the
+  credentials itself and retries 429 (honouring `Retry-After`), 5xx and
+  network errors with exponential backoff.
+- `internal/export`: runs the plan (top-level collections, then one request
+  per datacenter / cluster), up to `--parallel` requests at a time.
+  Pagination is driven by `offset`/`limit`, never by following
+  `_links.next`, and pages are merged. Ids from responses become URL path
+  segments only if they look like ids. Coverage records every request's
+  outcome; when a parent is not readable, its children are recorded as
+  `skipped` with the reason.
 - `internal/snapshot`: container writer/reader (zip, manifest, checksums,
   optional age encryption). Shared by both commands.
-- `internal/httpx` *(planned)*: an HTTP client whose transport rejects
-  everything except GET/HEAD, plus retry, rate-limit handling
-  (`X-RateLimit-*` headers) and pagination.
-- `internal/endpoints` *(planned)*: the explicit list of endpoints the
-  exporter calls. Reviewing this file is reviewing what the tool can do.
+- `internal/fakeapi`: serves a snapshot back as the IONOS API would
+  (paginated, with error bodies), so tests run the exporter end to end
+  against the demo contract and check that it reproduces it byte for byte.
 
 No IONOS SDK: plain `net/http` keeps the dependency tree tiny and preserves
 every field the API returns (SDKs drop fields they don't model).
 
 Runs non-interactively, so the same binary works for manual runs and CI/cron.
-Exit codes: `0` complete, `2` partial (some endpoints forbidden/failed),
-`1` fatal.
+Exit codes: `0` complete, `2` written but partial (some endpoints
+forbidden/failed; endpoints excluded with `--skip` don't count), `1` failed
+and nothing written (including HTTP 401 on the first request).
+
+Credentials come from `--token-file`, `IONOS_TOKEN`, or
+`IONOS_USERNAME`/`IONOS_PASSWORD`, never from arguments. They are not
+logged, not part of any error message, and not in the snapshot. Output files
+are written atomically with mode 0600 and not overwritten without `--force`.
 
 **Credentials (recommended):** a dedicated non-admin IONOS user in a group
 with *read* shares on all datacenters. New datacenters are not shared
@@ -173,7 +192,7 @@ runs in the browser.
 ## Roadmap
 
 1. ✅ Repo scaffold, snapshot format v1, manifest schema, fixture generator
-2. Exporter MVP: Cloud API compute, network and Cross Connects; coverage; age
+2. ✅ Exporter MVP: Cloud API compute, network and Cross Connects, DBaaS PostgreSQL; coverage; age
 3. ✅ Explorer MVP: load snapshot (incl. age), global search, detail panel
 4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
 5. Appliance detection, VPN Gateway coverage, manual links

@@ -763,7 +763,7 @@ func (g *gen) emitAll() {
 
 	g.emit(pgAPI, "/clusters", "/clusters", "", obj{
 		"id": "clusters", "type": "collection", "href": pgBase + "/clusters",
-		"items": nonNil(g.postgres), "offset": 0, "limit": 100, "_links": obj{},
+		"items": nonNil(g.postgres), "offset": 0, "limit": len(g.postgres), "_links": obj{},
 	})
 }
 
@@ -834,11 +834,11 @@ func (g *gen) emit(api, endpoint, path, query string, doc obj) {
 }
 
 // collection mimics a top-level Cloud API list response after the exporter
-// has merged all pages.
+// has merged all pages (offset 0, limit = item count, no links).
 func (g *gen) collection(path string, items []any) obj {
 	return obj{
 		"id": strings.TrimPrefix(strings.ReplaceAll(path, "/", "-"), "-"), "type": "collection", "href": cloudBase + path,
-		"items": nonNil(items), "offset": 0, "limit": 1000, "_links": obj{},
+		"items": nonNil(items), "offset": 0, "limit": len(nonNil(items)), "_links": obj{},
 	}
 }
 

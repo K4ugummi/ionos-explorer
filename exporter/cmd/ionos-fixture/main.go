@@ -9,8 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"filippo.io/age"
-
 	"ionos-explorer/exporter/internal/fixture"
 	"ionos-explorer/exporter/internal/snapshot"
 )
@@ -33,35 +31,18 @@ func run() error {
 	var (
 		out            = flag.String("o", "demo-contract.ionx", "output file")
 		seed           = flag.Int64("seed", 1, "random seed (same seed = identical output)")
+		recipientsFile = flag.String("recipients-file", "", "encrypt to the age recipients listed in this file")
 		passphraseFile = flag.String("passphrase-file", "", "encrypt with the passphrase read from this file")
 		recipients     multiFlag
 	)
 	flag.Var(&recipients, "recipient", "encrypt to this age X25519 recipient (age1...), repeatable")
 	flag.Parse()
 
-	var opts snapshot.Options
-	for _, r := range recipients {
-		rcp, err := age.ParseX25519Recipient(r)
-		if err != nil {
-			return fmt.Errorf("--recipient %q: %w", r, err)
-		}
-		opts.Recipients = append(opts.Recipients, rcp)
+	rcps, err := snapshot.Recipients(recipients, *recipientsFile, *passphraseFile)
+	if err != nil {
+		return err
 	}
-	if *passphraseFile != "" {
-		if len(recipients) > 0 {
-			// age does not allow mixing scrypt with other recipients.
-			return fmt.Errorf("--passphrase-file cannot be combined with --recipient")
-		}
-		b, err := os.ReadFile(*passphraseFile)
-		if err != nil {
-			return err
-		}
-		rcp, err := age.NewScryptRecipient(strings.TrimRight(string(b), "\r\n"))
-		if err != nil {
-			return err
-		}
-		opts.Recipients = append(opts.Recipients, rcp)
-	}
+	opts := snapshot.Options{Recipients: rcps}
 
 	w, err := fixture.Generate(fixture.Options{Seed: *seed, Version: version})
 	if err != nil {

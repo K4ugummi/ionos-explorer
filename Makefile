@@ -1,5 +1,5 @@
 
-.PHONY: test fixture explorer-dev explorer-build
+.PHONY: test fixture exporter explorer-dev explorer-build
 
 test:
 	cd exporter && go vet ./... && go test ./...
@@ -8,6 +8,9 @@ test:
 # Regenerate the synthetic demo snapshot (deterministic for a given seed).
 fixture:
 	cd exporter && go run ./cmd/ionos-fixture -o ../fixtures/demo-contract.ionx
+
+exporter:
+	cd exporter && go build -trimpath -o ../bin/ionos-export ./cmd/ionos-export
 
 explorer-dev:
 	cd explorer && npm run dev
