@@ -158,13 +158,13 @@ func TestFlagsAndCredentials(t *testing.T) {
 func TestList(t *testing.T) {
 	// --list needs neither credentials nor network.
 	code, stdout, _ := cli(t, []string{"--list"}, nil)
-	if code != 0 || !strings.Contains(stdout, "only GET requests, only to api.ionos.com") ||
-		!strings.Contains(stdout, "GET /datacenters/{datacenterId}/servers?depth=4") ||
-		!strings.Contains(stdout, "https://api.ionos.com/databases/postgresql (DBaaS PostgreSQL v1)") {
+	if code != 0 || !strings.Contains(stdout, "only GET requests, only to api.ionos.com, postgresql.de-fra.ionos.com,") ||
+		!strings.Contains(stdout, "GET /datacenters/{datacenterId}/servers?depth=5") ||
+		!strings.Contains(stdout, "https://postgresql.gb-bhx.ionos.com (DBaaS PostgreSQL v2)") {
 		t.Errorf("exit %d\n%s", code, stdout)
 	}
 	code, stdout, _ = cli(t, []string{"--list", "--base-url", "http://127.0.0.1:9/"}, nil)
-	if code != 0 || !strings.Contains(stdout, "http://127.0.0.1:9/cloudapi/v6 (Cloud API v6)") {
+	if code != 0 || !strings.Contains(stdout, "http://127.0.0.1:9/api.ionos.com/cloudapi/v6 (Cloud API v6)") {
 		t.Errorf("exit %d\n%s", code, stdout)
 	}
 }

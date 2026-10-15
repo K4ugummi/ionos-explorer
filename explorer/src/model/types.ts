@@ -8,6 +8,7 @@ export type NodeKind =
   | 'nic'
   | 'volume'
   | 'natgateway'
+  | 'securitygroup'
   | 'nlb'
   | 'alb'
   | 'targetgroup'
@@ -17,6 +18,9 @@ export type NodeKind =
   | 'k8s'
   | 'nodepool'
   | 'postgres'
+  | 'vpngateway'
+  | 'vpntunnel'
+  | 'external' // outside the contract: a VPN remote host, or a site the user added
   | 'other'
 
 export interface Fact {
@@ -45,7 +49,20 @@ export interface GraphNode {
   searchText: string
   /** True for nodes inferred from references when the resource itself is not visible. */
   placeholder?: boolean
+  /** NICs: whether IONOS hands out the IP by DHCP. When false the VM sets its own, which may differ. */
+  dhcp?: boolean
+  /** NICs and their servers with an IP correction: the IPs IONOS reports. `ips` then holds the corrected ones. */
+  ionosIps?: string[]
+  /** Servers that look like network appliances, and why (see appliances.ts). */
+  appliance?: Appliance
   raw: unknown
+}
+
+export interface Appliance {
+  /** A product when the image names one, otherwise a role. */
+  title: string
+  confidence: 'high' | 'medium' | 'low'
+  reasons: string[]
 }
 
 export type EdgeKind =
@@ -59,13 +76,18 @@ export type EdgeKind =
   | 'gateway' // NAT gateway → LAN
   | 'uses-image' // volume → image
   | 'consumer' // IP block → resource using one of its IPs
-  | 'connection' // managed service → LAN
+  | 'connection' // managed service or VPN gateway → LAN
+  | 'tunnel' // VPN tunnel / WireGuard peer → the resource or external host at its far end
+  | 'manual' // a link the user added (annotations, not from the API)
+  | 'secured-by' // server or NIC → Security Group
 
 export interface GraphEdge {
   kind: EdgeKind
   from: string
   to: string
   label?: string
+  /** Manual links: id of the annotation the edge comes from. */
+  ref?: string
 }
 
 export interface CoverageIssue {

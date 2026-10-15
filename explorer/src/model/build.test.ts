@@ -40,7 +40,7 @@ describe('buildModel on the demo fixture', async () => {
     expect(m.edgesByNode.get(reserve.id)).toBeUndefined()
     const consumers = byKind(m, 'ipblock').flatMap((b) => m.edgesByNode.get(b.id) ?? [])
     const kinds = new Set(consumers.map((e) => m.nodes.get(e.to)!.kind))
-    expect(kinds).toEqual(new Set(['nic', 'natgateway', 'nlb', 'alb']))
+    expect(kinds).toEqual(new Set(['nic', 'natgateway', 'nlb', 'alb', 'vpngateway']))
   })
 
   it('attaches labels, images and managed services', () => {
@@ -53,11 +53,27 @@ describe('buildModel on the demo fixture', async () => {
     expect(byName(m, 'np-general').parentId).toBe(byName(m, 'k8s-prod-fra').id)
   })
 
+  it('reads Security Groups and who uses them', () => {
+    const groups = byKind(m, 'securitygroup')
+    expect(groups.map((g) => g.name).sort()).toEqual(['sg-edge-ipsec', 'sg-edge-web'])
+    const web = byName(m, 'sg-edge-web')
+    expect(m.nodes.get(web.parentId!)!.name).toBe('lhr-prod-edge')
+    expect(web.facts.find((f) => f.label === 'Rules')?.value).toBe('TCP 443, ICMP')
+    const users = m.edges.filter((e) => e.kind === 'secured-by' && e.to === web.id).map((e) => m.nodes.get(e.from)!.name)
+    expect(users.sort()).toEqual(['lhr-proxy-01', 'lhr-proxy-02', 'lhr-proxy-03'])
+  })
+
+  it('reads PostgreSQL v2 clusters from the regional APIs', () => {
+    const pg = byName(m, 'pg-orders-prod')
+    const facts = Object.fromEntries(pg.facts.map((f) => [f.label, f.value]))
+    expect(facts).toMatchObject({ PostgreSQL: '15', Instances: '3', RAM: '16 GB', Replication: 'ASYNCHRONOUS' })
+    expect(pg.location).toBe('de/fra')
+    const lan = m.edges.find((e) => e.from === pg.id && e.kind === 'connection')
+    expect(m.nodes.get(lan!.to)!.name).toBe('db')
+  })
+
   it('reports partial visibility', () => {
-    expect(m.coverageIssues.map((c) => `${c.endpoint} ${c.status}`).sort()).toEqual([
-      '/um/groups forbidden',
-      '/um/users forbidden',
-    ])
+    expect(m.coverageIssues.map((c) => `${c.endpoint} ${c.status}`).sort()).toEqual(['/um/groups forbidden', '/um/users forbidden'])
   })
 })
 
@@ -96,6 +112,72 @@ describe('buildModel robustness', () => {
     expect(m.nodes.get('pcc-x')?.placeholder).toBe(true)
     expect(m.edges.some((e) => e.kind === 'cross-connect' && e.to === 'pcc-x')).toBe(true)
     expect(m.coverageIssues).toHaveLength(1)
+  })
+
+  it('still reads PostgreSQL v1 clusters from older snapshots', () => {
+    const v1 = {
+      id: 'pg1',
+      properties: {
+        displayName: 'old-pg',
+        postgresVersion: '14',
+        instances: 2,
+        ram: 4096,
+        location: 'de/txl',
+        connections: [{ datacenterId: 'dc1', lanId: '1', cidr: '10.0.0.5/24' }],
+      },
+    }
+    const m = buildModel({
+      manifest: {
+        ...manifest,
+        coverage: [
+          { api: 'postgresql-v1', endpoint: '/clusters', path: '/clusters', file: 'raw/postgresql-v1/clusters.json', status: 'ok' },
+        ],
+      },
+      files: new Map([['raw/postgresql-v1/clusters.json', { items: [v1] }]]),
+    })
+    const pg = byName(m, 'old-pg')
+    expect(pg.facts.find((f) => f.label === 'RAM')?.value).toBe('4 GB')
+    expect(pg.ips).toEqual(['10.0.0.5'])
+  })
+
+  it('names users and admits firewall rules it cannot see', () => {
+    const m = buildModel({
+      manifest: {
+        ...manifest,
+        coverage: [
+          { api: 'cloudapi-v6', endpoint: '/um/users', path: '/um/users', file: 'raw/cloudapi-v6/um/users.json', status: 'ok' },
+          {
+            api: 'cloudapi-v6',
+            endpoint: '/datacenters/{datacenterId}/servers',
+            path: '/datacenters/dc1/servers',
+            file: 'raw/cloudapi-v6/datacenters/dc1/servers.json',
+            status: 'ok',
+          },
+        ],
+      },
+      files: new Map<string, unknown>([
+        [
+          'raw/cloudapi-v6/um/users.json',
+          { items: [{ id: 'u1', properties: { firstname: 'Ada', lastname: 'Example', email: 'a@example.com' } }] },
+        ],
+        [
+          'raw/cloudapi-v6/datacenters/dc1/servers.json',
+          {
+            items: [
+              {
+                id: 's1',
+                properties: { name: 'srv' },
+                entities: {
+                  nics: { items: [{ id: 'n1', properties: { lan: 1 }, entities: { firewallrules: { items: [{ id: 'r1' }] } } }] },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+    })
+    expect(m.nodes.get('u1')?.name).toBe('Ada Example')
+    expect(m.nodes.get('n1')?.facts.find((f) => f.label === 'Firewall rules')?.value).toBe('1 (contents not in this snapshot)')
   })
 })
 

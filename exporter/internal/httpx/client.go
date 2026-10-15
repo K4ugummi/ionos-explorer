@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// MaxBody caps a single response. Even depth=4 server lists of large
+// MaxBody caps a single response. Even depth=5 server lists of large
 // contracts are a few MB.
 const MaxBody = 256 << 20
 
@@ -68,7 +68,7 @@ type Options struct {
 	Retries int
 	// First retry delay, doubled each time. Default 1s.
 	Backoff time.Duration
-	// Per-request timeout. Default 3m: depth=4 lists of big datacenters are slow.
+	// Per-request timeout. Default 3m: depth=5 lists of big datacenters are slow.
 	Timeout time.Duration
 	// Transport underneath the guards; http.DefaultTransport when nil.
 	Transport http.RoundTripper

@@ -7,7 +7,7 @@ test:
 
 # Regenerate the synthetic demo snapshot (deterministic for a given seed).
 fixture:
-	cd exporter && go run ./cmd/ionos-fixture -o ../fixtures/demo-contract.ionx
+	cd exporter && go run ./cmd/ionos-fixture -o ../fixtures/demo-contract.ionx --annotations ../fixtures/demo-annotations.json
 
 exporter:
 	cd exporter && go build -trimpath -o ../bin/ionos-export ./cmd/ionos-export

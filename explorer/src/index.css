@@ -25,6 +25,8 @@
   --edge-cc: #0f7b6c;
   --edge-inet: #1f62d1;
   --edge-target: #7a3fc2;
+  --edge-vpn: #b4237a;
+  --edge-manual: #c2410c;
   --group-bg: rgba(91, 101, 119, 0.05);
   --group-border: #c9cfd8;
 
@@ -62,6 +64,8 @@
     --edge-cc: #4cc9b0;
     --edge-inet: #6ea1ff;
     --edge-target: #b591f2;
+    --edge-vpn: #f472b6;
+    --edge-manual: #fb923c;
     --group-bg: rgba(160, 169, 184, 0.05);
     --group-border: #343c49;
     color-scheme: dark;

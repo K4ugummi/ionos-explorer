@@ -37,11 +37,27 @@ bin/ionos-export                    # writes ionos-<contract>-<time>.ionx
 bin/ionos-export --recipient age1...  -o contract.ionx.age   # encrypted
 ```
 
+Regions where you use no VPN Gateway just return empty lists; `--skip vpn`
+leaves the VPN Gateway API out entirely.
+
 Use a dedicated user with read access to all datacenters. What it may not
 read (e.g. `/um/users` for non-admins) is recorded in the snapshot and shown
 as "partial visibility"; `--skip /um` leaves it out. Exit code 2 means the
 snapshot was written but is partial. Drop the file onto the explorer's
 start screen to open it.
+
+## Appliances and manual links
+
+The explorer flags servers that look like routers, firewalls or VPN
+endpoints (from image names, firewall rules, LAN placement; always with the
+reasons) and draws IONOS VPN Gateway tunnels. Links the API cannot see, such
+as an IPsec tunnel between two Cisco VMs, can be added in a resource's
+details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
+keeps a record that may be outdated (`dhcp:off` finds them), and a
+correction, entered per NIC or pasted as a list on the Overview page, is
+shown next to the IONOS value. Links and corrections stay in your browser;
+export/import them as a file on the Overview page. The demo snapshot comes
+with examples (`fixtures/demo-annotations.json`).
 
 Encrypted fixture (for testing the age path):
 

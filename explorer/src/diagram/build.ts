@@ -10,6 +10,7 @@ export const SIZE = {
   resource: { width: 236, height: 54 },
   member: { width: 196, height: 42 },
   internet: { width: 180, height: 44 },
+  external: { width: 210, height: 52 },
   lanHeight: 44,
 } as const
 
@@ -49,7 +50,15 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 const fact = (n: GraphNode, label: string) => n.facts.find((f) => f.label === label)?.value
 
 function base(n: GraphNode): NodeData {
-  return { title: n.name, kind: n.kind, inactive: isInactive(n), placeholder: n.placeholder || undefined }
+  const a = n.appliance
+  return {
+    title: n.name,
+    kind: n.kind,
+    inactive: isInactive(n),
+    placeholder: n.placeholder || undefined,
+    tag: a ? (a.confidence === 'high' ? a.title : 'appliance?') : undefined,
+    tagLevel: a?.confidence,
+  }
 }
 
 function subtitle(n: GraphNode): string {
@@ -58,8 +67,22 @@ function subtitle(n: GraphNode): string {
       ? `${KINDS.nodepool.label}${fact(n, 'Nodes') ? ` · ${plural(Number(fact(n, 'Nodes')), 'node')}` : ''}`
       : n.kind === 'postgres'
         ? `PostgreSQL ${fact(n, 'PostgreSQL') ?? ''}`.trim()
-        : (subtypeLabel(n.kind, n.subtype) ?? KINDS[n.kind].label)
-  return [what, n.ips[0]].filter(Boolean).join(' · ')
+        : n.kind === 'vpngateway'
+          ? `${n.subtype ?? ''} VPN gateway`.trim()
+          : (subtypeLabel(n.kind, n.subtype) ?? KINDS[n.kind].label)
+  return [what, ipLabel(n)].filter(Boolean).join(' · ')
+}
+
+/** The first IP; ✎ marks one the user corrected (IONOS has another on record). */
+function ipLabel(n: GraphNode) {
+  const ip = n.ips[0]
+  return ip && n.ionosIps && !n.ionosIps.includes(ip) ? `${ip} ✎` : ip
+}
+
+function pccSubtitle(pcc: GraphNode, dcs: number) {
+  if (pcc.subtype === 'unused') return 'no LAN connected'
+  if (pcc.subtype === 'one LAN') return 'only 1 LAN connected'
+  return dcs ? plural(dcs, 'datacenter') : 'peers not in this snapshot'
 }
 
 /** Cross Connect → the LANs it joins, grouped by datacenter. */
@@ -78,6 +101,35 @@ function nodesOf(model: Model, kind: NodeKind) {
   return [...model.nodes.values()].filter((n) => n.kind === kind)
 }
 
+function externalNode(n: GraphNode, id: string, parent?: string): DiagramNode {
+  const hosts = n.subtype === 'Site' ? fact(n, 'Hosts') : undefined
+  return {
+    id,
+    type: 'external',
+    parent,
+    ref: n.id,
+    ...SIZE.external,
+    data: { ...base(n), subtitle: [n.subtype, hosts].filter(Boolean).join(' · ') },
+  }
+}
+
+/** VPN tunnels and manual links with the model nodes at their two ends. */
+function links(model: Model) {
+  const out: { kind: 'tunnel' | 'manual'; from: GraphNode; to: GraphNode; id: string; label?: string; ref: string }[] = []
+  for (const e of model.edges) {
+    const [a, b] = [model.nodes.get(e.from), model.nodes.get(e.to)]
+    if (!a || !b) continue
+    if (e.kind === 'tunnel') {
+      // Drawn from the gateway; the tunnel itself has no box.
+      const gw = a.parentId ? model.nodes.get(a.parentId) : undefined
+      out.push({ kind: 'tunnel', from: gw?.kind === 'vpngateway' ? gw : a, to: b, id: `tun:${a.id}`, label: a.name, ref: a.id })
+    } else if (e.kind === 'manual') {
+      out.push({ kind: 'manual', from: a, to: b, id: `ml:${e.ref ?? `${a.id}-${b.id}`}`, label: e.label ?? 'manual link', ref: a.id })
+    }
+  }
+  return out
+}
+
 // --- contract view -------------------------------------------------------------
 
 const DC_PILLS: [NodeKind, string, string?][] = [
@@ -88,6 +140,7 @@ const DC_PILLS: [NodeKind, string, string?][] = [
   ['natgateway', 'NAT', 'NAT'],
   ['nodepool', 'node pool'],
   ['postgres', 'PostgreSQL', 'PostgreSQL'],
+  ['vpngateway', 'VPN gateway'],
 ]
 
 /**
@@ -102,12 +155,14 @@ export function contractDiagram(model: Model): Diagram {
 
   const counts = new Map<string, Map<NodeKind, number>>()
   const publicDcs = new Set<string>()
+  const appliances = new Map<string, number>()
   for (const n of model.nodes.values()) {
     if (!n.dcId || n.dcId === n.id) continue
     const c = counts.get(n.dcId) ?? new Map<NodeKind, number>()
     c.set(n.kind, (c.get(n.kind) ?? 0) + 1)
     counts.set(n.dcId, c)
     if (n.kind === 'lan' && n.subtype === 'public') publicDcs.add(n.dcId)
+    if (n.appliance) appliances.set(n.dcId, (appliances.get(n.dcId) ?? 0) + 1)
   }
 
   const dcs = nodesOf(model, 'datacenter').sort(byName)
@@ -137,7 +192,10 @@ export function contractDiagram(model: Model): Diagram {
           ...base(dc),
           subtitle: fact(dc, 'Description') ?? dc.location,
           public: publicDcs.has(dc.id) || undefined,
-          pills: DC_PILLS.filter(([k]) => c.get(k)).map(([k, one, many]) => plural(c.get(k)!, one, many)),
+          pills: [
+            ...DC_PILLS.filter(([k]) => c.get(k)).map(([k, one, many]) => plural(c.get(k)!, one, many)),
+            ...(appliances.get(dc.id) ? [plural(appliances.get(dc.id)!, 'appliance')] : []),
+          ],
         },
       })
       groupOf.set(dc.id, gid)
@@ -150,7 +208,6 @@ export function contractDiagram(model: Model): Diagram {
     if (n.dcId && n.dcId !== n.id && anchors.has(n.dcId)) anchors.set(n.id, n.dcId)
   }
 
-  const unattached = 'group:unattached-pcc'
   for (const pcc of nodesOf(model, 'pcc').sort(byName)) {
     const peers = [...pccPeers(model, pcc.id).keys()].filter((id) => groupOf.has(id))
     peers.sort((a, b) => byName(model.nodes.get(a)!, model.nodes.get(b)!))
@@ -162,16 +219,17 @@ export function contractDiagram(model: Model): Diagram {
     }
     const groups = new Set(peers.map((p) => groupOf.get(p)!))
     let parent: string | undefined
+    const unused = pcc.subtype === 'unused'
     if (peers.length === 0) {
-      if (!nodes.some((n) => n.id === unattached)) {
+      parent = unused ? 'group:unused-pcc' : 'group:invisible-pcc'
+      if (!nodes.some((n) => n.id === parent)) {
         nodes.push({
-          id: unattached,
+          id: parent,
           type: 'group',
-          data: { title: 'No visible peers' },
+          data: { title: unused ? 'Unused Cross Connects' : 'Peers not in this snapshot' },
           layout: { ...PACKED, 'elk.padding': GROUP_PADDING, 'elk.spacing.nodeNode': '16' },
         })
       }
-      parent = unattached
     } else if (groups.size === 1) parent = [...groups][0]
     nodes.push({
       id,
@@ -179,9 +237,51 @@ export function contractDiagram(model: Model): Diagram {
       parent,
       ref: pcc.id,
       ...SIZE.hub,
-      data: { ...base(pcc), subtitle: peers.length ? plural(peers.length, 'datacenter') : 'no visible peers' },
+      data: { ...base(pcc), subtitle: pccSubtitle(pcc, peers.length) },
     })
     for (const dc of peers) edges.push({ id: `${id}:${dc}`, source: dc, target: id, kind: 'cross-connect', ref: pcc.id })
+  }
+
+  // Everything outside the contract: VPN remote hosts and sites.
+  const externals = nodesOf(model, 'external').sort(byName)
+  if (externals.length) {
+    const gid = 'group:external'
+    nodes.push({
+      id: gid,
+      type: 'group',
+      data: { title: 'Outside the contract', subtitle: plural(externals.length, 'endpoint') },
+      layout: { ...PACKED, 'elk.padding': GROUP_PADDING, 'elk.spacing.nodeNode': '16' },
+    })
+    for (const n of externals) {
+      nodes.push(externalNode(n, n.id, gid))
+      anchors.set(n.id, n.id)
+    }
+  }
+
+  // VPN tunnels and manual links between datacenters (or to the outside),
+  // one line per pair and kind.
+  const end = (n: GraphNode) => (n.kind === 'external' ? n.id : n.kind === 'datacenter' ? n.id : n.dcId)
+  const pairs = new Map<string, { kind: 'tunnel' | 'manual'; a: string; b: string; items: { label?: string; ref: string; id: string }[] }>()
+  for (const l of links(model)) {
+    const [a, b] = [end(l.from), end(l.to)]
+    if (!a || !b || a === b || !anchors.has(a) || !anchors.has(b)) continue
+    const [x, y] = [a, b].sort()
+    const key = `${l.kind}:${x}|${y}`
+    const p = pairs.get(key) ?? { kind: l.kind, a: x, b: y, items: [] }
+    p.items.push({ label: l.label, ref: l.ref, id: l.ref })
+    pairs.set(key, p)
+  }
+  for (const [key, p] of pairs) {
+    const one = p.items.length === 1 ? p.items[0] : undefined
+    edges.push({
+      id: key,
+      source: p.a,
+      target: p.b,
+      kind: p.kind,
+      label: one?.label ?? plural(p.items.length, p.kind === 'tunnel' ? 'VPN tunnel' : 'link'),
+      ref: one?.ref,
+    })
+    if (p.kind === 'tunnel') for (const i of p.items) anchors.set(i.id, one ? key : (anchors.get(i.id) ?? key))
   }
 
   return {
@@ -260,15 +360,17 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   }
   for (const n of [...model.nodes.values()].sort(byName)) {
     if (n.kind === 'nodepool' && n.dcId === dcId) attach(n, ['member'])
-    else if (n.kind === 'postgres' && out(n).some((e) => e.kind === 'connection' && lanIds.has(e.to))) attach(n, ['connection'])
+    else if ((n.kind === 'postgres' || n.kind === 'vpngateway') && out(n).some((e) => e.kind === 'connection' && lanIds.has(e.to)))
+      attach(n, ['connection'])
   }
 
-  // Tier LANs by distance from the internet (public LANs first). NAT gateways
-  // do not bridge tiers: they only give private LANs a way out.
+  // Tier LANs by distance from the internet (public LANs first). NAT and VPN
+  // gateways do not bridge tiers: they only give private LANs a way out.
+  const edgeDevice = (n: GraphNode) => n.kind === 'natgateway' || n.kind === 'vpngateway'
   const level = new Map<string, number>()
   const neighbours = new Map<string, Set<string>>()
   for (const d of devices) {
-    if (d.node.kind === 'natgateway') continue
+    if (edgeDevice(d.node)) continue
     for (const a of d.lans) for (const b of d.lans) if (a.id !== b.id) neighbours.set(a.id, (neighbours.get(a.id) ?? new Set()).add(b.id))
   }
   const degree = (id: string) => devices.filter((d) => d.lans.some((l) => l.id === id)).length
@@ -290,7 +392,7 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   for (const d of devices) if (!d.ordered) d.lans.sort((a, b) => rank(a.id) - rank(b.id) || degree(b.id) - degree(a.id))
 
   // Internet.
-  const hasInternet = lans.some((l) => l.subtype === 'public') || devices.some((d) => d.node.kind === 'natgateway' && d.node.ips.length)
+  const hasInternet = lans.some((l) => l.subtype === 'public') || devices.some((d) => edgeDevice(d.node) && d.node.ips.length)
   if (hasInternet) nodes.push({ id: 'internet', type: 'internet', ...SIZE.internet, data: { title: 'Internet' } })
 
   // LANs; wider when busy so they read like a bus.
@@ -352,7 +454,7 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
         parent: gid,
         ref: m.node.id,
         ...SIZE.member,
-        data: { ...base(m.node), subtitle: m.node.ips[0] ?? subtitle(m.node) },
+        data: { ...base(m.node), subtitle: ipLabel(m.node) ?? subtitle(m.node) },
       })
       boxOf.set(m.node.id, gid)
     }
@@ -367,8 +469,9 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
     const box = boxOf.get(n.id)!
     const grouped = box !== n.id
     const [first, ...rest] = d.lans
-    if (n.kind === 'natgateway') {
-      if (hasInternet && n.ips.length) addEdge({ source: 'internet', target: box, kind: 'internet', label: fact(n, 'Public IPs') })
+    if (edgeDevice(n)) {
+      if (hasInternet && n.ips.length)
+        addEdge({ source: 'internet', target: box, kind: 'internet', label: fact(n, 'Public IPs') ?? fact(n, 'Public IP') })
       d.lans.forEach((l) => addEdge({ source: box, target: l.id, kind: 'lan', label: l.label }))
       continue
     }
@@ -389,6 +492,16 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
     }
   }
 
+  /** Another datacenter, drawn as a node that opens its diagram. */
+  const peerNode = (peer: GraphNode) => {
+    const pid = `peer:${peer.id}`
+    if (!nodes.some((n) => n.id === pid)) {
+      nodes.push({ id: pid, type: 'peer', ref: peer.id, ...SIZE.peer, data: { ...base(peer), subtitle: peer.location } })
+      anchors.set(peer.id, pid)
+    }
+    return pid
+  }
+
   // Cross Connects and the datacenters behind them.
   const pccs = [...pccEdges.keys()].map((id) => model.nodes.get(id)!).sort(byName)
   for (const pcc of pccs) {
@@ -400,7 +513,14 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
       type: 'hub',
       ref: pcc.id,
       ...SIZE.hub,
-      data: { ...base(pcc), subtitle: peers.size ? `to ${plural(peers.size, 'datacenter')}` : 'no other visible peers' },
+      data: {
+        ...base(pcc),
+        subtitle: peers.size
+          ? `to ${plural(peers.size, 'datacenter')}`
+          : pcc.subtype === 'one LAN'
+            ? 'only this LAN connected'
+            : 'no other datacenter',
+      },
     })
     anchors.set(pcc.id, hub)
     for (const lan of pccEdges.get(pcc.id)!) addEdge({ source: lan, target: hub, kind: 'cross-connect' })
@@ -409,11 +529,7 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
       .filter((n): n is GraphNode => !!n)
       .sort(byName)
     for (const peer of peerDcs) {
-      const pid = `peer:${peer.id}`
-      if (!nodes.some((n) => n.id === pid)) {
-        nodes.push({ id: pid, type: 'peer', ref: peer.id, ...SIZE.peer, data: { ...base(peer), subtitle: peer.location } })
-        anchors.set(peer.id, pid)
-      }
+      const pid = peerNode(peer)
       addEdge({
         source: hub,
         target: pid,
@@ -432,6 +548,7 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   )
   const leftovers: [string, GraphNode[]][] = [
     ['Unattached volumes', kids.filter((k) => k.kind === 'volume' && !attachedVolumes.has(k.id))],
+    ['Security Groups', kids.filter((k) => k.kind === 'securitygroup')],
     ['Other resources', kids.filter((k) => k.kind === 'other')],
   ]
   for (const [title, list] of leftovers) {
@@ -450,12 +567,34 @@ export function datacenterDiagram(model: Model, dcId: string): Diagram {
   for (const e of model.edges) if (e.kind === 'attached' && boxOf.has(e.from)) serverOf.set(e.to, e.from)
   for (const n of model.nodes.values()) {
     if (anchors.has(n.id) || n.dcId !== dcId) continue
-    const host = n.kind === 'nic' ? n.parentId : serverOf.get(n.id)
+    const host = n.kind === 'nic' || n.kind === 'vpntunnel' ? n.parentId : serverOf.get(n.id)
     if (host && anchors.has(host)) anchors.set(n.id, anchors.get(host)!)
   }
   for (const k8s of nodesOf(model, 'k8s')) {
     const pool = (model.children.get(k8s.id) ?? []).find((id) => anchors.has(id))
     if (pool) anchors.set(k8s.id, pool)
+  }
+
+  // VPN tunnels and manual links. The far end sits above the local one: a
+  // peer datacenter node, or an endpoint outside the contract.
+  const local = (n: GraphNode) => (n.dcId === dcId && n.kind !== 'datacenter' ? anchors.get(n.id) : undefined)
+  const remote = (n: GraphNode) => {
+    if (n.kind === 'external') {
+      const id = `x:${n.id}`
+      if (!nodes.some((x) => x.id === id)) nodes.push(externalNode(n, id))
+      anchors.set(n.id, id)
+      return id
+    }
+    const other = model.nodes.get(n.kind === 'datacenter' ? n.id : (n.dcId ?? ''))
+    return other?.kind === 'datacenter' && other.id !== dcId ? peerNode(other) : undefined
+  }
+  for (const l of links(model)) {
+    const [a, b] = [local(l.from), local(l.to)]
+    if (!a && !b) continue
+    const [source, target] = a && b ? [a, b] : a ? [remote(l.to), a] : [remote(l.from), b]
+    if (!source || !target) continue
+    addEdge({ id: l.id, source, target, kind: l.kind, label: l.label, ref: l.ref })
+    if (l.kind === 'tunnel') anchors.set(l.ref, l.id)
   }
 
   return empty

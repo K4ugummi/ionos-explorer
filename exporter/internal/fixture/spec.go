@@ -14,6 +14,7 @@ type dcSpec struct {
 	ALB                              *lbSpec
 	NodePools                        []nodePoolSpec
 	Postgres                         []pgSpec
+	SecurityGroups                   []sgSpec
 	OrphanVolumes                    []string // volumes not attached to any server
 }
 
@@ -57,12 +58,48 @@ type nodePoolSpec struct {
 	LANs              []string
 }
 
+// Network Security Groups attach to servers by role. A server with one has
+// no firewall rules of its own on its NICs: the group replaces them.
+type sgSpec struct {
+	Name, Description string
+	Rules             string   // rule preset, as for NIC firewalls (by role)
+	Roles             []string // servers with these roles get the group
+}
+
 type pgSpec struct {
 	Name, LAN, Version string
 	Instances          int
 }
 
 type pccSpec struct{ Name, Description string }
+
+// Managed VPN gateways (regional VPN Gateway API). A tunnel's Remote is either
+// the name of a server in the contract (its public IP is used) or a host
+// outside the contract.
+type vpnSpec struct {
+	Name, Kind, DC, LAN, Description string // Kind: ipsec | wireguard
+	Tunnels                          []tunnelSpec
+}
+
+type tunnelSpec struct {
+	Name, Description string
+	Remote            string
+	Networks          []string // IPsec: peer networks; WireGuard: allowed IPs
+	Port              int      // WireGuard endpoint port; 0 = roaming peer without endpoint
+}
+
+var vpnSpecs = []vpnSpec{
+	{Name: "vpngw-mgmt", Kind: "ipsec", DC: "fra-mgmt", LAN: "mgmt", Description: "Managed VPN into the management network",
+		Tunnels: []tunnelSpec{
+			{Name: "hq-office", Description: "Head office firewall", Remote: "192.0.2.10", Networks: []string{"172.16.0.0/16"}},
+			{Name: "txl-core", Description: "Berlin core VPN appliance", Remote: "txl-core-vpn-01", Networks: []string{"10.0.0.0/8"}},
+		}},
+	{Name: "wg-staging", Kind: "wireguard", DC: "lhr-staging", LAN: "app", Description: "Developer access to UK staging",
+		Tunnels: []tunnelSpec{
+			{Name: "build-agent-uk", Description: "Build agent in the office", Remote: "192.0.2.77", Port: 51820, Networks: []string{"192.168.77.2/32"}},
+			{Name: "laptop-ops-1", Description: "Roaming laptop", Networks: []string{"192.168.77.10/32"}},
+		}},
+}
 
 var pccSpecs = []pccSpec{
 	{"fra-backbone", "Frankfurt production backbone"},
@@ -285,6 +322,10 @@ var dcSpecs = []dcSpec{
 			{Name: "lhr-edge-gw-%02d", Count: 1, Type: "ENTERPRISE", Cores: 4, RAM: 8192, LANs: []string{"inet", "link"}, Role: "vpn", Image: "asav9-20-2-15"},
 		},
 		NLB: &lbSpec{Name: "lhr-nlb", Listener: "inet", Target: "link", Port: 443, TargetRole: "proxy"},
+		SecurityGroups: []sgSpec{
+			{Name: "sg-edge-web", Description: "HTTPS from anywhere", Rules: "proxy", Roles: []string{"proxy"}},
+			{Name: "sg-edge-ipsec", Description: "IPsec from partner sites", Rules: "vpn", Roles: []string{"vpn"}},
+		},
 	},
 	{
 		Name: "lhr-staging", Location: "gb/lhr", Env: "staging",

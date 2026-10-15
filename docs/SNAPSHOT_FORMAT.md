@@ -29,22 +29,27 @@ raw/cloudapi-v6/datacenters/<datacenterId>/servers.json
 raw/cloudapi-v6/datacenters/<datacenterId>/lans.json
 raw/cloudapi-v6/pccs.json
 raw/cloudapi-v6/k8s/<clusterId>/nodepools.json
-raw/postgresql-v1/clusters.json
+raw/postgresql-v2-de-fra/clusters.json
 ```
 
-`<apiId>` comes from `manifest.apis[].id`. Regional product APIs (e.g. MariaDB,
-Kafka, In-Memory DB) get one ID per region, e.g. `mariadb-v1-de-txl`.
+`<apiId>` comes from `manifest.apis[].id`. Regional product APIs (PostgreSQL, VPN
+Gateway, later MariaDB, Kafka, In-Memory DB) get one ID per region, e.g.
+`postgresql-v2-de-txl`.
 
 ## Raw files
 
-Each file is the API's JSON response **as returned**, with two changes:
+Each file is the API's JSON response **as returned**, with three changes:
 
 1. **Paginated collections are merged**: all pages' `items` concatenated,
    `offset` 0, `limit` = items fetched, `_links` empty.
 2. **Canonical serialization**: object keys sorted, 2-space indent, numbers
    kept verbatim, no HTML escaping.
+3. **Secrets removed**: a non-empty string in a field named `password`,
+   `imagePassword`, `preSharedKey`, `psk`, `privateKey` or `secret` (any case)
+   becomes `"[removed by ionos-export]"`. The APIs should not return these;
+   this is a safety net.
 
-Nothing is renamed, dropped or interpreted.
+Nothing else is renamed, dropped or interpreted.
 
 ## Manifest
 
@@ -69,7 +74,7 @@ Lets consumers distinguish *"there are no X"* from *"we could not see X"*.
 |---|---|
 | `api` | API id |
 | `endpoint` | path template, e.g. `/datacenters/{datacenterId}/servers` |
-| `path`, `query` | the concrete request, e.g. `depth=4` |
+| `path`, `query` | the concrete request, e.g. `depth=5` |
 | `status` | `ok`, `forbidden` (401/403), `not_found`, `error`, `skipped` (excluded with `--skip`, or its parent collection was not readable; `path` is then the template) |
 | `httpStatus` | last HTTP status |
 | `file` | raw file (only for `ok`) |
@@ -86,7 +91,8 @@ the fixture in sync.
 |---|---|---|
 | `/contracts` | | contract number, resource limits |
 | `/datacenters` | `depth=1` | datacenter properties |
-| `/datacenters/{id}/servers` | `depth=4` | servers + attached volumes, CD-ROMs, NICs, firewall rules, flow logs |
+| `/datacenters/{id}/servers` | `depth=5` | servers + attached volumes, CD-ROMs, NICs, firewall rules, flow logs, Security Groups (at `depth=4` firewall rules are only references) |
+| `/datacenters/{id}/securitygroups` | `depth=3` | network Security Groups with `entities.rules` (same properties as firewall rules), `entities.servers`, `entities.nics` |
 | `/datacenters/{id}/volumes` | `depth=1` | all volumes incl. unattached |
 | `/datacenters/{id}/lans` | `depth=1` | LANs incl. `pcc` and `ipFailover` |
 | `/datacenters/{id}/natgateways` | `depth=3` | + rules, flow logs |
@@ -101,7 +107,17 @@ the fixture in sync.
 | `/labels` | `depth=1` | labels of all resources |
 | `/um/users`, `/um/groups` | `depth=1` | usually `forbidden` for read-only users |
 
-DBaaS PostgreSQL: `/clusters` (`connections[].datacenterId/lanId`).
+DBaaS PostgreSQL v2 (regional, `https://postgresql.<region>.ionos.com`, API id
+`postgresql-v2-<region>`, all regions): `/clusters` (`connection.datacenterId/lanId/primaryInstanceAddress`,
+`instances.count/cores/ram/storageSize` in GB, `metadata.dnsName`). The global
+v1 API (`postgresql-v1`, `connections[]`, sizes in MB) was shut down on
+2026-09-15; the explorer still reads older snapshots that contain it.
+
+VPN Gateway (regional, `https://vpn.<region>.ionos.com`, API id
+`vpn-v1-<region>`, all regions): `/ipsecgateways`,
+`/ipsecgateways/{gatewayId}/tunnels`, `/wireguardgateways`,
+`/wireguardgateways/{gatewayId}/peers` (`connections[].datacenterId/lanId`,
+`gatewayIP`, tunnel `remoteHost` / peer `endpoint.host`).
 
 ## Key cross-references
 
@@ -110,5 +126,6 @@ DBaaS PostgreSQL: `/clusters` (`connections[].datacenterId/lanId`).
 - Server `properties.templateUuid` → `/templates` item (Cubes)
 - Volume `properties.image` → `/images` item (same location)
 - NLB/ALB `listenerLan` / `targetLan` → LAN id; ALB `httpRules[].targetGroup` → `/targetgroups`
-- Node pool `datacenterId` + `lans[].id`; Postgres `connections[]`
+- Node pool `datacenterId` + `lans[].id`; Postgres `connection` (v1: `connections[]`)
 - IP block `ipConsumers[]` → `datacenterId`, `serverId`, `nicId`
+- VPN tunnel `remoteHost` / WireGuard peer `endpoint.host` → a public IP in the contract (NIC, NAT, load balancer, VPN gateway `gatewayIP`), else outside

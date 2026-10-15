@@ -25,6 +25,9 @@ export type FlowEdge = Edge<FlowEdgeData>
 
 export const DiagramActions = createContext<{ openDc: (dcId: string) => void }>({ openDc: () => {} })
 
+/** Lines that are hard to tell apart without their name. */
+const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
+
 /** Turns a layout into React Flow elements with selection and search state applied. */
 export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefined, matches: Set<string> | null) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
@@ -68,7 +71,7 @@ export function toFlow(layout: Layout, diagram: Diagram, anchor: string | undefi
         label: e.label,
         points: e.points,
         ref: e.ref,
-        showLabel: (hl && e.kind !== 'target') || (e.kind === 'cross-connect' && !!e.label),
+        showLabel: (hl && e.kind !== 'target') || (ALWAYS_LABELLED.has(e.kind) && !!e.label),
       },
     }
   })

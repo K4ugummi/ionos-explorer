@@ -103,12 +103,30 @@ export function PeerNode({ data, selected }: NodeProps<FlowNode>) {
 export function BoxNode({ data, selected }: NodeProps<FlowNode>) {
   const d = data.node.data
   return (
-    <div className={classes(data, selected)} title={[d.title, d.subtitle].filter(Boolean).join('\n')}>
+    <div
+      className={classes(data, selected)}
+      title={[d.title, d.subtitle, d.tag && `Network appliance: ${d.tag}`].filter(Boolean).join('\n')}
+    >
       <Handles />
       <div className="dg-head">
         {d.kind && <KindBadge kind={d.kind} />}
         <span className="t">{d.title}</span>
+        {d.tag && <span className={`dg-tag ${d.tagLevel ?? ''}`}>{d.tag}</span>}
         {d.inactive && <span className="dg-off" title="Not running" />}
+      </div>
+      {d.subtitle && <div className="s">{d.subtitle}</div>}
+    </div>
+  )
+}
+
+export function ExternalNode({ data, selected }: NodeProps<FlowNode>) {
+  const d = data.node.data
+  return (
+    <div className={classes(data, selected)} title={[d.title, d.subtitle].filter(Boolean).join('\n')}>
+      <Handles />
+      <div className="dg-head">
+        <KindBadge kind="external" />
+        <span className="t">{d.title}</span>
       </div>
       {d.subtitle && <div className="s">{d.subtitle}</div>}
     </div>

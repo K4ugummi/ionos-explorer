@@ -1,5 +1,7 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { applyAnnotations, isEmpty, loadStored, saveStored, storageKey, type Annotations } from './annotations/annotations'
+import { AnnotationsContext } from './annotations/context'
 import { diagramFor } from './diagram/build'
 import { DiagramView } from './diagram/DiagramView'
 import type { GraphNode, Model } from './model/types'
@@ -14,20 +16,37 @@ import { useHashState } from './ui/useHashState'
 const DRAWER_WIDTH = 440
 
 function App() {
-  const [model, setModel] = useState<Model | null>(null)
-  if (!model) return <OpenScreen onLoaded={setModel} />
+  const [open, setOpen] = useState<{ model: Model; demoLinks?: Annotations } | null>(null)
+  if (!open) return <OpenScreen onLoaded={(model, demoLinks) => setOpen({ model, demoLinks })} />
   return (
     <Explorer
-      model={model}
+      model={open.model}
+      demoLinks={open.demoLinks}
       onClose={() => {
         window.history.replaceState(null, '', window.location.pathname + window.location.search)
-        setModel(null)
+        setOpen(null)
       }}
     />
   )
 }
 
-function Explorer({ model, onClose }: { model: Model; onClose: () => void }) {
+function Explorer({ model: snapshotModel, demoLinks, onClose }: { model: Model; demoLinks?: Annotations; onClose: () => void }) {
+  // Manual links, sites and IP corrections, kept in this browser per contract.
+  const key = storageKey(snapshotModel)
+  const contract = snapshotModel.manifest.contract?.number
+  const [annotations, setAnnotations] = useState(() => {
+    const stored = loadStored(key)
+    return demoLinks && isEmpty(stored) ? demoLinks : stored
+  })
+  useEffect(() => saveStored(key, annotations, contract), [key, annotations, contract])
+  const updateAnnotations = useCallback((fn: (a: Annotations) => Annotations) => setAnnotations(fn), [])
+  const applied = useMemo(() => applyAnnotations(snapshotModel, annotations), [snapshotModel, annotations])
+  const model = applied.model
+  const annotationsState = useMemo(
+    () => ({ annotations, update: updateAnnotations, dangling: applied.dangling, staleIps: applied.staleIps, contract }),
+    [annotations, updateAnnotations, applied.dangling, applied.staleIps, contract],
+  )
+
   const [params, update] = useHashState()
   const view = params.get('view') === 'overview' ? 'overview' : 'diagram'
   const dcParam = params.get('dc') ?? undefined
@@ -64,70 +83,76 @@ function Explorer({ model, onClose }: { model: Model; onClose: () => void }) {
   }
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <button className="brand" onClick={home}>
-          IONOS Explorer
-        </button>
-        <div className="tabs" role="tablist" aria-label="View">
-          <button role="tab" aria-selected={view === 'diagram'} onClick={() => update({ view: undefined }, true)}>
-            Diagram
+    <AnnotationsContext.Provider value={annotationsState}>
+      <div className="app">
+        <header className="topbar">
+          <button className="brand" onClick={home}>
+            IONOS Explorer
           </button>
-          <button role="tab" aria-selected={view === 'overview'} onClick={() => update({ view: 'overview' }, true)}>
-            Overview
-          </button>
-        </div>
-        <div className="meta">
-          <span>{model.nodes.get(model.rootId)!.name}</span>
-          <span title={m.createdAt}>{new Date(m.createdAt).toLocaleString()}</span>
-          <span>
-            {m.generator.name} {m.generator.version}
-          </span>
-          {m.synthetic && <span className="pill">demo data</span>}
-          {issues > 0 && (
-            <button className="pill warn" onClick={() => update({ view: 'overview', node: undefined }, true)} title="Show what is missing">
-              partial visibility ({issues})
+          <div className="tabs" role="tablist" aria-label="View">
+            <button role="tab" aria-selected={view === 'diagram'} onClick={() => update({ view: undefined }, true)}>
+              Diagram
             </button>
+            <button role="tab" aria-selected={view === 'overview'} onClick={() => update({ view: 'overview' }, true)}>
+              Overview
+            </button>
+          </div>
+          <div className="meta">
+            <span>{model.nodes.get(model.rootId)!.name}</span>
+            <span title={m.createdAt}>{new Date(m.createdAt).toLocaleString()}</span>
+            <span>
+              {m.generator.name} {m.generator.version}
+            </span>
+            {m.synthetic && <span className="pill">demo data</span>}
+            {issues > 0 && (
+              <button
+                className="pill warn"
+                onClick={() => update({ view: 'overview', node: undefined }, true)}
+                title="Show what is missing"
+              >
+                partial visibility ({issues})
+              </button>
+            )}
+          </div>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Open another snapshot
+          </button>
+        </header>
+        <div className="workspace">
+          <SearchPanel model={model} query={query} setQuery={setQuery} selectedId={selected?.id} onSelect={navigate} />
+          {view === 'diagram' ? (
+            <main className="stage">
+              <DiagramView
+                model={model}
+                dcId={dcId}
+                selectedId={shown?.id}
+                matches={matches}
+                onSelect={select}
+                onOpenDc={openDc}
+                rightInset={shown && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
+              />
+              {shown && (
+                <aside className="drawer" aria-label="Details">
+                  <button className="btn small drawer-close" onClick={() => select(undefined)} aria-label="Close details">
+                    ✕
+                  </button>
+                  <DetailPanel key={shown.id} model={model} node={shown} onSelect={navigate} action={action(shown)} />
+                </aside>
+              )}
+            </main>
+          ) : (
+            <main className="main">
+              {shown ? (
+                <DetailPanel key={shown.id} model={model} node={shown} onSelect={select} action={action(shown)} />
+              ) : (
+                <Overview model={model} onSelect={select} onSearch={setQuery} />
+              )}
+            </main>
           )}
         </div>
-        <span className="spacer" />
-        <button className="btn" onClick={onClose}>
-          Open another snapshot
-        </button>
-      </header>
-      <div className="workspace">
-        <SearchPanel model={model} query={query} setQuery={setQuery} selectedId={selected?.id} onSelect={navigate} />
-        {view === 'diagram' ? (
-          <main className="stage">
-            <DiagramView
-              model={model}
-              dcId={dcId}
-              selectedId={shown?.id}
-              matches={matches}
-              onSelect={select}
-              onOpenDc={openDc}
-              rightInset={shown && window.innerWidth > 760 ? DRAWER_WIDTH : 0}
-            />
-            {shown && (
-              <aside className="drawer" aria-label="Details">
-                <button className="btn small drawer-close" onClick={() => select(undefined)} aria-label="Close details">
-                  ✕
-                </button>
-                <DetailPanel key={shown.id} model={model} node={shown} onSelect={navigate} action={action(shown)} />
-              </aside>
-            )}
-          </main>
-        ) : (
-          <main className="main">
-            {shown ? (
-              <DetailPanel key={shown.id} model={model} node={shown} onSelect={select} action={action(shown)} />
-            ) : (
-              <Overview model={model} onSelect={select} onSearch={setQuery} />
-            )}
-          </main>
-        )}
       </div>
-    </div>
+    </AnnotationsContext.Provider>
   )
 }
 

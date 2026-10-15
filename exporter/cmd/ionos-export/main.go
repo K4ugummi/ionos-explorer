@@ -76,7 +76,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		recipientsFile = fs.String("recipients-file", "", "encrypt to the age recipients listed in this file")
 		passphraseFile = fs.String("passphrase-file", "", "encrypt with the passphrase read from this file")
 		parallel       = fs.Int("parallel", 4, "concurrent requests")
-		baseURL        = fs.String("base-url", "", "send requests here instead of https://api.ionos.com (for a local mock)")
+		baseURL        = fs.String("base-url", "", "send all requests to this URL instead of the IONOS API hosts (for a local mock)")
 		list           = fs.Bool("list", false, "print every request the exporter can make, then exit")
 		verbose        = fs.Bool("v", false, "print every request as it finishes")
 		showVersion    = fs.Bool("version", false, "print the version and exit")
@@ -193,7 +193,7 @@ func apiBases(override string) (map[string]string, []string, error) {
 			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 				return nil, nil, fmt.Errorf("--base-url %q: want an absolute http(s) URL", override)
 			}
-			base = u.String() + strings.TrimPrefix(base, "https://api.ionos.com")
+			base = u.String() + a.Prefix()
 		}
 		bases[a.ID] = base
 		u, _ := url.Parse(base)

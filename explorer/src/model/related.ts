@@ -13,7 +13,10 @@ const TITLES: Record<EdgeKind, [string, string]> = {
   gateway: ['NAT for LANs', 'NAT gateways'],
   'uses-image': ['Image', 'Used by volumes'],
   consumer: ['IPs in use by', 'IP block'],
-  connection: ['Connected LANs', 'Managed services'],
+  connection: ['Connected LANs', 'Managed services and VPN gateways'],
+  tunnel: ['Remote end', 'VPN tunnels ending here'],
+  manual: ['Manual links', 'Manual links'],
+  'secured-by': ['Security Groups', 'Applied to'],
 }
 
 export interface RelatedItem {
@@ -37,6 +40,8 @@ export function related(model: Model, id: string): RelatedGroup[] {
     if (!other) continue
     // A LAN lists the servers on it ("Members"); repeating each NIC adds noise.
     if (!outgoing && e.kind === 'attached' && other.kind === 'nic') continue
+    // Manual links have their own section, with buttons to remove them.
+    if (e.kind === 'manual') continue
     let title = TITLES[e.kind][outgoing ? 0 : 1]
     if (e.kind === 'attached') title = outgoing ? `Attached ${KINDS[other.kind].plural}` : 'Attached to'
     const list = groups.get(title) ?? []

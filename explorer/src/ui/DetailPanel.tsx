@@ -3,6 +3,8 @@ import { KINDS, subtypeLabel } from '../model/kinds'
 import { breadcrumb, related } from '../model/related'
 import type { GraphNode, Model, NodeKind } from '../model/types'
 import { KindBadge, NodeList } from './common'
+import { IpAddresses } from './IpAddresses'
+import { ManualLinks } from './ManualLinks'
 
 export function DetailPanel({
   model,
@@ -88,6 +90,20 @@ export function DetailPanel({
         </div>
       )}
 
+      {node.appliance && (
+        <section className={`section appliance ${node.appliance.confidence}`}>
+          <h2>
+            Network appliance: {node.appliance.title}
+            <span className="pill">{CONFIDENCE[node.appliance.confidence]}</span>
+          </h2>
+          <ul>
+            {node.appliance.reasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {node.facts.length > 0 && (
         <section className="section">
           <h2>Properties</h2>
@@ -102,6 +118,8 @@ export function DetailPanel({
         </section>
       )}
 
+      <IpAddresses model={model} node={node} />
+
       {groups.length > 0 && (
         <section className="section">
           <h2>Connections</h2>
@@ -113,6 +131,8 @@ export function DetailPanel({
           ))}
         </section>
       )}
+
+      <ManualLinks model={model} node={node} onSelect={onSelect} />
 
       {children.length > 0 && (
         <section className="section">
@@ -132,6 +152,8 @@ export function DetailPanel({
     </article>
   )
 }
+
+const CONFIDENCE = { high: 'certain', medium: 'likely', low: 'possible' } as const
 
 function RawJSON({ raw, open }: { raw: unknown; open: boolean }) {
   const [shown, setShown] = useState(open)

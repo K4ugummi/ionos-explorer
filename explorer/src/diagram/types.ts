@@ -14,6 +14,7 @@ export type DiagramNodeType =
   | 'resource' // server, load balancer, NAT gateway, managed service
   | 'member' // compact resource inside a group
   | 'internet'
+  | 'external' // outside the contract: VPN remote host or a site the user added
 
 export interface NodeData {
   title: string
@@ -25,6 +26,9 @@ export interface NodeData {
   placeholder?: boolean
   /** Public LAN, internet-facing. */
   public?: boolean
+  /** Short marker, e.g. the product of a detected network appliance. */
+  tag?: string
+  tagLevel?: 'high' | 'medium' | 'low'
 }
 
 export interface DiagramNode {
@@ -41,7 +45,7 @@ export interface DiagramNode {
   data: NodeData
 }
 
-export type DiagramEdgeKind = 'cross-connect' | 'lan' | 'internet' | 'peer' | 'target'
+export type DiagramEdgeKind = 'cross-connect' | 'lan' | 'internet' | 'peer' | 'target' | 'tunnel' | 'manual'
 
 export interface DiagramEdge {
   id: string

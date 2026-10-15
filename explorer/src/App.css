@@ -1051,6 +1051,22 @@ button.pill {
   stroke-dasharray: 5 4;
 }
 
+/* VPN tunnels (from the API) and manual links (from the user) */
+.react-flow__edge.dg-edge.tunnel .react-flow__edge-path,
+.dg-legend-line.tunnel {
+  stroke: var(--edge-vpn);
+  stroke-width: 2.2;
+  stroke-dasharray: 8 4;
+}
+
+.react-flow__edge.dg-edge.manual .react-flow__edge-path,
+.dg-legend-line.manual {
+  stroke: var(--edge-manual);
+  stroke-width: 2.2;
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+
 .react-flow__edge.dg-edge.hl .react-flow__edge-path {
   stroke-width: 3;
 }
@@ -1082,6 +1098,54 @@ button.pill {
   font-weight: 600;
 }
 
+.dg-edge-label.tunnel {
+  color: var(--edge-vpn);
+  border-color: color-mix(in srgb, var(--edge-vpn) 45%, transparent);
+  font-weight: 600;
+}
+
+.dg-edge-label.manual {
+  color: var(--edge-manual);
+  border-color: color-mix(in srgb, var(--edge-manual) 45%, transparent);
+  border-style: dashed;
+  font-weight: 600;
+}
+
+/* outside the contract */
+.dg-external {
+  border-style: dashed;
+  border-color: var(--edge-vpn);
+}
+
+/* network appliance marker */
+.dg-tag {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  margin-left: auto;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
+.dg-tag.high {
+  font-weight: 600;
+}
+
+.dg-tag.low {
+  border-style: dashed;
+}
+
+.dg-tag + .dg-off {
+  margin-left: 4px;
+}
+
 /* minimap */
 .react-flow__minimap .mm-group {
   fill: transparent;
@@ -1103,4 +1167,258 @@ button.pill {
 
 .react-flow__minimap .mm-internet {
   fill: var(--edge-inet);
+}
+
+/* --- network appliances and manual links -------------------------------------- */
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.section.appliance > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.section.appliance > h2 .pill {
+  margin-left: auto;
+}
+
+.section.appliance ul {
+  margin: 0;
+  padding: 8px 12px 10px 30px;
+  display: grid;
+  gap: 3px;
+}
+
+.manual-links > .rel-list,
+.manual-links > .hint,
+.manual-links > .row,
+.manual-links > .add-link {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+.manual-links > .rel-list + .row,
+.manual-links > .rel-list + .add-link {
+  border-top: 1px solid var(--border);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* a list entry with a small action button at its end */
+.rel-list li.with-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rel-list li.with-action > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.rel-list li.with-action > .btn {
+  flex: none;
+  width: auto;
+}
+
+.rel-list li.with-action span:not(.kind):not(.ctx) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rel-list li.with-action .ctx {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-link {
+  display: grid;
+  gap: 8px;
+}
+
+.add-link input {
+  font: inherit;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 0;
+}
+
+.add-link .hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.seg button {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg button[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.picked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.picked .ctx {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-left: auto;
+}
+
+/* --- IP addresses and corrections --------------------------------------------- */
+
+.pill.fix {
+  background: transparent;
+  border-color: var(--edge-manual);
+  color: var(--edge-manual);
+}
+
+.ip-check > .hint {
+  margin: 0;
+  padding: 8px 12px 0;
+}
+
+.ip-rows {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.ip-rows > li {
+  padding: 6px 12px;
+}
+
+.ip-rows > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.ip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.ip-lan {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ip-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ip-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.ip-was {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.ip-form {
+  margin-top: 8px;
+}
+
+.ip-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.hint.error {
+  color: var(--danger);
+}
+
+.ip-paste textarea {
+  font: 13px/1.4 var(--mono);
+  width: 100%;
+  min-height: 110px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.ip-preview {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.ip-preview .bad {
+  color: var(--danger);
+}
+
+.section > h3.sub {
+  margin: 0;
+  padding: 10px 12px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }

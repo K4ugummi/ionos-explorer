@@ -142,21 +142,51 @@ Site-to-site links built *inside* VMs (e.g. Cisco Catalyst 8000V / CSR1000v
 or ASAv doing IPsec) are invisible to the IONOS API: it only sees a VM with
 NICs. The explorer handles this in three layers:
 
-1. **Appliance detection (heuristic).** A server is flagged as a likely
-   network appliance, with the reasons shown, when it matches signals such as:
-   boot volume from a private image whose name matches a known vendor
-   pattern (`c8000v`, `csr1000v`, `asav`, `fortigate`, `pa-vm`, `vyos`,
-   `pfsense`, `opnsense`, …); firewall rules allowing ESP or UDP 500/4500;
-   NICs in a public LAN plus one or more private LANs; name/label hints.
-2. **IONOS VPN Gateway (managed).** Fetched by the exporter (regional API).
-   If a tunnel's remote host matches a public IP in the contract, the
-   explorer draws the link automatically. Otherwise it points to an external
-   node.
-3. **Manual links.** Edges the user adds in the explorer (e.g.
-   `fra-core-vpn-01 ↔ txl-core-vpn-01, IPsec`, or to an external site such
-   as "HQ on-prem"). Stored in a separate annotations file keyed by resource
-   ID, never inside the snapshot, and drawn visually distinct (dashed) from
-   API-derived edges.
+1. **Appliance detection (heuristic, `src/model/appliances.ts`).** A server
+   is flagged as a network appliance, always with the reasons, from these
+   signals: an attached volume's or CD-ROM's image name matching a product
+   rule (`IMAGE_RULES`: Cisco Catalyst 8000V/CSR/ASAv/FTDv/SD-WAN, FortiGate,
+   Palo Alto, Check Point, vSRX, Sophos, BIG-IP, VeloCloud, VyOS, pfSense,
+   OPNsense, MikroTik, OpenWrt); a managed VPN tunnel ending at its public
+   IP; firewall rules admitting IKE (UDP 500/4500), ESP or AH; NICs in a
+   public and a private LAN (or in three or more LANs); a shared failover
+   IP; name or label words (`NAME_HINTS`). Product or tunnel → *certain*;
+   IPsec rules plus routing position → *likely*; routing position plus a
+   weaker hint → *possible*. Ordinary multi-homed servers (bastions, proxies)
+   are not flagged. Appliances get a tag in the diagram, a pill on their
+   datacenter card, an Overview list and `is:appliance` in search. Both
+   rule lists are plain data, meant to be extended.
+2. **IONOS VPN Gateway (managed).** The exporter fetches IPsec and WireGuard
+   gateways with their tunnels / peers from the regional VPN API in every
+   region. A gateway hangs between the internet and the LANs it connects. A
+   tunnel whose remote host is a public IP of the contract (server NIC,
+   failover IP, NAT, load balancer, another VPN gateway) is drawn to that
+   resource; otherwise to an external endpoint node. Pre-shared keys are
+   never returned by the API.
+3. **Manual links and sites (`src/annotations`).** Links the user adds in a
+   resource's details (e.g. `fra-core-vpn-01 ↔ txl-core-vpn-01, IPsec`), and
+   external sites such as "Head office" with optional public IPs; VPN
+   tunnels to those IPs then end at the site. Kept per contract in the
+   browser's local storage and exported/imported as a JSON file
+   (`format: "ionos-explorer-annotations"`, keyed by resource ID), never in
+   the snapshot. Links to resources missing from a snapshot are kept and
+   reported. Drawn dotted orange; VPN tunnels dashed magenta.
+4. **IP corrections (same file, `ips: [{nic, ips, note}]`).** IONOS only
+   knows the IP it has on record for a NIC; with DHCP off it never hands it
+   out and the VM may use another. The model keeps NICs' `dhcp` flag
+   (search `dhcp:off`), and a correction replaces the NIC's and server's
+   IPs in the applied model (search, details, diagram ✎) while the IONOS
+   ones stay in `ionosIps` (`is:corrected`; `ip:` finds both). Entered per
+   NIC in the details, or pasted on the Overview page as lines of
+   `server, LAN, IP`, `MAC, IP` or `NIC id, IP` (`annotations/ipList.ts`).
+   Corrections are keyed by NIC ID, so they survive re-exports. Other
+   resolution (load balancer targets, VPN remote hosts) still uses the
+   IONOS IPs.
+
+On the contract view, tunnels and links between datacenters are one line
+per datacenter pair (labelled with the name, or a count), endpoints outside
+the contract sit in their own group. In a datacenter view the far end is
+drawn above the local one: a peer datacenter node or an external endpoint.
 
 Snapshot sizes are small (a few MB for hundreds of servers), so everything
 runs in the browser.
@@ -168,7 +198,8 @@ runs in the browser.
   machine that exported them. The root `.gitignore` refuses `*.ionx` and
   `*.age` except the synthetic fixture.
 - The exporter never writes the token, the `Authorization` header, or
-  request bodies anywhere.
+  request bodies anywhere, and blanks password-like fields in responses
+  (see SNAPSHOT_FORMAT.md) in case an API returns one.
 - The explorer has no backend and blocks outbound requests via CSP. A
   malicious snapshot can at worst render odd text: values are always
   rendered as text, never as HTML.
@@ -192,9 +223,9 @@ runs in the browser.
 ## Roadmap
 
 1. ✅ Repo scaffold, snapshot format v1, manifest schema, fixture generator
-2. ✅ Exporter MVP: Cloud API compute, network and Cross Connects, DBaaS PostgreSQL; coverage; age
+2. ✅ Exporter MVP: Cloud API compute, network and Cross Connects, DBaaS PostgreSQL (v2, regional since the first real run); coverage; age
 3. ✅ Explorer MVP: load snapshot (incl. age), global search, detail panel
 4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
-5. Appliance detection, VPN Gateway coverage, manual links
+5. ✅ Appliance detection, VPN Gateway coverage, manual links and sites
 6. Wider coverage (DBaaS, Kubernetes, IAM, DNS, …), snapshot diff,
    SVG/PNG/draw.io export

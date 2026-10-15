@@ -1,10 +1,14 @@
 import { useRef, useState } from 'react'
+// Small enough to bundle; the CSP would refuse fetching an inlined data: URL.
+import demoLinks from '../../../fixtures/demo-annotations.json'
 import demoUrl from '../../../fixtures/demo-contract.ionx?url'
+import { parse, type Annotations } from '../annotations/annotations'
 import { buildModel } from '../model/build'
 import type { Model } from '../model/types'
 import { EncryptedSnapshotError, isEncrypted, loadSnapshot } from '../snapshot/load'
 
-export function OpenScreen({ onLoaded }: { onLoaded: (m: Model) => void }) {
+/** `demoLinks`: example manual links that come with the demo snapshot. */
+export function OpenScreen({ onLoaded }: { onLoaded: (m: Model, demoLinks?: Annotations) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [over, setOver] = useState(false)
@@ -12,12 +16,12 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model) => void }) {
   const [secret, setSecret] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
-  async function open(name: string, data: Uint8Array, key?: string) {
+  async function open(name: string, data: Uint8Array, key?: string, demoLinks?: Annotations) {
     setBusy(true)
     setError(undefined)
     try {
       const snapshot = await loadSnapshot(data, key)
-      onLoaded(buildModel(snapshot))
+      onLoaded(buildModel(snapshot), demoLinks)
     } catch (e) {
       if (e instanceof EncryptedSnapshotError) {
         setLocked({ name, data })
@@ -46,7 +50,7 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model) => void }) {
   async function openDemo() {
     setLocked(undefined)
     const res = await fetch(demoUrl)
-    await open('demo-contract.ionx', new Uint8Array(await res.arrayBuffer()))
+    await open('demo-contract.ionx', new Uint8Array(await res.arrayBuffer()), undefined, parse(demoLinks).annotations)
   }
 
   return (
@@ -65,7 +69,9 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model) => void }) {
     >
       <div className="open-card">
         <h1>IONOS Explorer</h1>
-        <p>Search and browse an entire IONOS Cloud contract from a snapshot made by <code>ionos-export</code>.</p>
+        <p>
+          Search and browse an entire IONOS Cloud contract from a snapshot made by <code>ionos-export</code>.
+        </p>
 
         <div
           className={`drop${over ? ' over' : ''}`}
@@ -98,14 +104,7 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model) => void }) {
             <label htmlFor="secret">
               <strong>{locked.name}</strong> is encrypted. Enter the passphrase or an age identity (AGE-SECRET-KEY-1…).
             </label>
-            <input
-              id="secret"
-              type="password"
-              autoFocus
-              autoComplete="off"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-            />
+            <input id="secret" type="password" autoFocus autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} />
             <div>
               <button className="btn primary" type="submit" disabled={busy || !secret}>
                 {busy ? 'Decrypting…' : 'Decrypt'}

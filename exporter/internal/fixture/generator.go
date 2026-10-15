@@ -5,20 +5,21 @@
 package fixture
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"ionos-explorer/exporter/internal/endpoints"
 	"ionos-explorer/exporter/internal/snapshot"
 )
 
 const (
 	cloudAPI  = "cloudapi-v6"
 	cloudBase = "https://api.ionos.com/cloudapi/v6"
-	pgAPI     = "postgresql-v1"
-	pgBase    = "https://api.ionos.com/databases/postgresql"
 
 	contractNumber = 31812345
 	officeIP       = "192.0.2.10/32"
@@ -72,8 +73,12 @@ type gen struct {
 	targetGroups []any
 	clusters     map[string]*k8sCluster
 	clusterOrder []*k8sCluster
-	postgres     []any
+	postgres     map[string][]any // region -> clusters
 	labels       []any
+	serverIPs    map[string]string           // server name -> first public IP
+	serverIDs    map[string]string           // server name -> id
+	vpn          map[string]map[string][]any // region -> ipsec|wireguard -> gateways
+	vpnChildren  map[string][]any            // gateway id -> tunnels or peers
 	totals       struct{ cores, ram, ssdGB, hddGB, dasGB, nlb, nat int }
 }
 
@@ -118,8 +123,15 @@ type dc struct {
 	nats    []any
 	nlbs    []any
 	albs    []any
+	sgs     []*secGroup
 	// role -> lan key -> private IPs, used to wire load balancer targets
 	roleIPs map[string]map[string][]string
+}
+
+type secGroup struct {
+	spec    sgSpec
+	obj     obj
+	servers []any // references, filled in as servers are built
 }
 
 type ipBlock struct {
@@ -140,20 +152,24 @@ func newGen(opts Options) *gen {
 		Generator: snapshot.Generator{Name: "ionos-fixture", Version: opts.Version},
 		Synthetic: true,
 		Contract:  &snapshot.Contract{Number: contractNumber, Owner: "cloud-admins@example.com"},
-		APIs: []snapshot.API{
-			{ID: cloudAPI, Name: "Cloud API", Version: "v6", BaseURL: cloudBase},
-			{ID: pgAPI, Name: "DBaaS PostgreSQL", Version: "v1", BaseURL: pgBase},
-		},
+	}
+	for _, a := range endpoints.APIs {
+		m.APIs = append(m.APIs, snapshot.API{ID: a.ID, Name: a.Name, Version: a.Version, BaseURL: a.BaseURL, Region: a.Region})
 	}
 	g := &gen{
-		rng:       rand.New(rand.NewSource(opts.Seed)),
-		now:       opts.CreatedAt.UTC(),
-		w:         snapshot.NewWriter(m),
-		templates: map[string]template{},
-		images:    map[string]string{},
-		subnets:   map[string]bool{},
-		pccs:      map[string]*pcc{},
-		clusters:  map[string]*k8sCluster{},
+		rng:         rand.New(rand.NewSource(opts.Seed)),
+		now:         opts.CreatedAt.UTC(),
+		w:           snapshot.NewWriter(m),
+		templates:   map[string]template{},
+		images:      map[string]string{},
+		subnets:     map[string]bool{},
+		pccs:        map[string]*pcc{},
+		clusters:    map[string]*k8sCluster{},
+		serverIPs:   map[string]string{},
+		serverIDs:   map[string]string{},
+		vpn:         map[string]map[string][]any{},
+		postgres:    map[string][]any{},
+		vpnChildren: map[string][]any{},
 	}
 	for _, e := range []string{"terraform@example.com", "terraform@example.com", "a.mueller@example.com", "j.schmidt@example.com", "k.weber@example.com"} {
 		g.users = append(g.users, user{g.uuid(), e})
@@ -184,6 +200,9 @@ func (g *gen) build() {
 	}
 	for i := range dcSpecs {
 		g.buildDC(&dcSpecs[i])
+	}
+	for _, v := range vpnSpecs {
+		g.buildVPN(v)
 	}
 	// A reserved block nobody uses: typical leftover worth spotting.
 	g.newBlock("de/fra", "ipb-de-fra-reserve", 4)
@@ -221,8 +240,14 @@ func (g *gen) buildDC(s *dcSpec) {
 		d.order = append(d.order, l)
 	}
 
+	for _, sg := range s.SecurityGroups {
+		g.buildSecurityGroup(d, sg)
+	}
 	for _, ss := range s.Servers {
 		g.buildServerGroup(d, ss)
+	}
+	for _, sg := range d.sgs {
+		sg.obj["entities"].(obj)["servers"] = g.entityCollection(sg.obj["href"].(string)+"/servers", sg.servers)
 	}
 	for _, name := range s.OrphanVolumes {
 		d.volumes = append(d.volumes, g.volume(d, name, "HDD", 250, "", "", "UNKNOWN", nil))
@@ -249,6 +274,7 @@ func (g *gen) buildServerGroup(d *dc, ss serverSpec) {
 	for i := 1; i <= ss.Count; i++ {
 		name := fmt.Sprintf(ss.Name, i)
 		sid := g.uuid()
+		g.serverIDs[name] = sid
 		href := fmt.Sprintf("%s/datacenters/%s/servers/%s", cloudBase, d.id, sid)
 		cpu := cpuFamilies[d.spec.Location]
 
@@ -286,13 +312,21 @@ func (g *gen) buildServerGroup(d *dc, ss serverSpec) {
 		g.totals.cores += cores
 		g.totals.ram += ram
 
+		var groups []any
+		for _, sg := range d.sgs {
+			if slices.Contains(sg.spec.Roles, ss.Role) {
+				groups = append(groups, sg.obj)
+				sg.servers = append(sg.servers, obj{"id": sid, "type": "server", "href": href})
+			}
+		}
+
 		var nics []any
 		for j, key := range ss.LANs {
 			l := d.lans[key]
 			if l == nil {
 				panic(fmt.Sprintf("%s: server %s references unknown LAN %q", d.spec.Name, name, key))
 			}
-			nic := g.nic(d, l, sid, href, name, ss.Role, j)
+			nic := g.nic(d, l, sid, href, name, ss.Role, j, len(groups) == 0)
 			nics = append(nics, nic)
 			if l.spec.Public {
 				publicNICs = append(publicNICs, nic)
@@ -316,9 +350,10 @@ func (g *gen) buildServerGroup(d *dc, ss serverSpec) {
 				"templateUuid": templateID,
 			},
 			"entities": obj{
-				"cdroms":  g.entityCollection(href+"/cdroms", []any{}),
-				"volumes": g.entityCollection(href+"/volumes", vols),
-				"nics":    g.entityCollection(href+"/nics", nics),
+				"cdroms":         g.entityCollection(href+"/cdroms", []any{}),
+				"volumes":        g.entityCollection(href+"/volumes", vols),
+				"nics":           g.entityCollection(href+"/nics", nics),
+				"securitygroups": g.entityCollection(href+"/securitygroups", groups),
 			},
 		})
 		g.label("server", sid, href, "env", d.spec.Env)
@@ -342,7 +377,11 @@ func (g *gen) buildServerGroup(d *dc, ss serverSpec) {
 	}
 }
 
-func (g *gen) nic(d *dc, l *lan, sid, serverHref, serverName, role string, idx int) obj {
+// Servers whose address is usually configured inside the VM. For their NICs
+// the IP in the API is only a record: IONOS does not hand it out.
+var staticRoles = map[string]bool{"firewall": true, "vpn": true, "database": true}
+
+func (g *gen) nic(d *dc, l *lan, sid, serverHref, serverName, role string, idx int, firewall bool) obj {
 	id := g.uuid()
 	href := serverHref + "/nics/" + id
 	mac := g.mac()
@@ -350,7 +389,12 @@ func (g *gen) nic(d *dc, l *lan, sid, serverHref, serverName, role string, idx i
 	rules := []any{}
 	if l.spec.Public {
 		ip = g.publicIP(d, obj{"nicId": id, "serverId": sid, "serverName": serverName, "mac": mac})
-		rules = g.firewallRules(href, role)
+		if firewall {
+			rules = g.firewallRules(href+"/firewallrules", role)
+		}
+		if _, ok := g.serverIPs[serverName]; !ok {
+			g.serverIPs[serverName] = ip
+		}
 	} else {
 		ip = l.sub.host()
 		byLAN := d.roleIPs[role]
@@ -364,19 +408,33 @@ func (g *gen) nic(d *dc, l *lan, sid, serverHref, serverName, role string, idx i
 		"id": id, "type": "nic", "href": href,
 		"metadata": g.meta("AVAILABLE"),
 		"properties": obj{
-			"name": "nic-" + l.spec.Name, "mac": mac, "ips": []any{ip}, "dhcp": true,
+			"name": "nic-" + l.spec.Name, "mac": mac, "ips": []any{ip}, "dhcp": !staticRoles[role],
 			"lan": l.id, "firewallActive": len(rules) > 0, "firewallType": "INGRESS",
 			"deviceNumber": idx + 1, "pciSlot": idx + 6,
 			"ipv6Ips": []any{}, "ipv6CidrBlock": nil, "dhcpv6": nil,
 		},
 		"entities": obj{
-			"firewallrules": g.entityCollection(href+"/firewallrules", rules),
-			"flowlogs":      g.entityCollection(href+"/flowlogs", []any{}),
+			"firewallrules":  g.entityCollection(href+"/firewallrules", rules),
+			"flowlogs":       g.entityCollection(href+"/flowlogs", []any{}),
+			"securitygroups": g.entityCollection(href+"/securitygroups", []any{}),
 		},
 	}
 }
 
-func (g *gen) firewallRules(nicHref, role string) []any {
+func (g *gen) buildSecurityGroup(d *dc, s sgSpec) {
+	id := g.uuid()
+	href := fmt.Sprintf("%s/datacenters/%s/securitygroups/%s", cloudBase, d.id, id)
+	d.sgs = append(d.sgs, &secGroup{spec: s, obj: obj{
+		"id": id, "type": "securitygroup", "href": href, "metadata": g.meta("AVAILABLE"),
+		"properties": obj{"name": s.Name, "description": s.Description},
+		"entities": obj{
+			"rules": g.entityCollection(href+"/rules", g.firewallRules(href+"/rules", s.Rules)),
+			"nics":  g.entityCollection(href+"/nics", []any{}),
+		},
+	}})
+}
+
+func (g *gen) firewallRules(collHref, role string) []any {
 	type rule struct {
 		name, proto, src string
 		from, to         int
@@ -408,7 +466,7 @@ func (g *gen) firewallRules(nicHref, role string) []any {
 		if r.from > 0 {
 			p["portRangeStart"], p["portRangeEnd"] = r.from, r.to
 		}
-		out = append(out, obj{"id": id, "type": "firewall-rule", "href": nicHref + "/firewallrules/" + id, "metadata": g.meta("AVAILABLE"), "properties": p})
+		out = append(out, obj{"id": id, "type": "firewall-rule", "href": collHref + "/" + id, "metadata": g.meta("AVAILABLE"), "properties": p})
 	}
 	return out
 }
@@ -606,17 +664,122 @@ func (g *gen) buildPostgres(d *dc, s pgSpec) {
 	region := strings.ReplaceAll(d.spec.Location, "/", "-")
 	m := g.meta("AVAILABLE")
 	delete(m, "etag")
-	g.postgres = append(g.postgres, obj{
-		"id": id, "type": "cluster", "metadata": m,
+	m["dnsName"] = fmt.Sprintf("pg-%s.postgresql.%s.ionos.com", id[:8], region)
+	// PostgreSQL v2: one connection, sizes per instance in GB, and the
+	// location only in the regional host the cluster is listed on.
+	g.postgres[region] = append(g.postgres[region], obj{
+		"id": id, "type": "cluster", "href": "https://postgresql." + region + ".ionos.com/clusters/" + id, "metadata": m,
 		"properties": obj{
-			"displayName": s.Name, "postgresVersion": s.Version, "location": d.spec.Location, "backupLocation": "de",
-			"instances": s.Instances, "cores": 4, "ram": 16384, "storageSize": 204800, "storageType": "SSD Premium",
-			"connections":         []any{obj{"datacenterId": d.id, "lanId": strconv.Itoa(l.id), "cidr": l.sub.host() + "/24"}},
-			"maintenanceWindow":   obj{"dayOfTheWeek": "Sunday", "time": "03:00:00"},
-			"synchronizationMode": "ASYNCHRONOUS",
-			"dnsName":             fmt.Sprintf("pg-%s.postgresql.%s.ionos.com", id[:8], region),
+			"name": s.Name, "description": "", "version": s.Version,
+			"instances":         obj{"count": s.Instances, "cores": 4, "ram": 16, "storageSize": 200},
+			"connection":        obj{"datacenterId": d.id, "lanId": strconv.Itoa(l.id), "primaryInstanceAddress": l.sub.host() + "/24"},
+			"maintenanceWindow": obj{"dayOfTheWeek": "Sunday", "time": "03:00:00"},
+			"replicationMode":   "ASYNCHRONOUS", "connectionPooler": "DISABLED",
+			"logsEnabled": true, "metricsEnabled": true,
+			"backup": obj{"location": "eu-central-3", "retentionDays": 7},
 		},
 	})
+}
+
+// --- VPN gateways ------------------------------------------------------------------
+
+func (g *gen) buildVPN(s vpnSpec) {
+	var d *dc
+	for _, c := range g.dcs {
+		if c.spec.Name == s.DC {
+			d = c
+		}
+	}
+	if d == nil || d.lans[s.LAN] == nil || d.lans[s.LAN].sub == nil {
+		panic("vpn " + s.Name + ": unknown datacenter or private LAN")
+	}
+	l := d.lans[s.LAN]
+	region := strings.Join(strings.Split(d.spec.Location, "/")[:2], "-")
+	base := "https://vpn." + region + ".ionos.com"
+	id := g.uuid()
+	coll := "ipsecgateways"
+	if s.Kind == "wireguard" {
+		coll = "wireguardgateways"
+	}
+	href := base + "/" + coll + "/" + id
+	childHref := href + "/tunnels/"
+	if s.Kind == "wireguard" {
+		childHref = href + "/peers/"
+	}
+	props := obj{
+		"name": s.Name, "description": s.Description,
+		"gatewayIP":         g.publicIP(d, obj{}),
+		"connections":       []any{obj{"datacenterId": d.id, "lanId": strconv.Itoa(l.id), "ipv4CIDR": l.sub.host() + "/24"}},
+		"tier":              "STANDARD",
+		"maintenanceWindow": obj{"dayOfTheWeek": "Monday", "time": "02:00:00"},
+	}
+	var children []any
+	for _, t := range s.Tunnels {
+		remote := t.Remote
+		if ip, ok := g.serverIPs[remote]; ok {
+			remote = ip
+		} else if remote != "" && !strings.HasPrefix(remote, "192.0.2.") {
+			panic("vpn " + s.Name + ": unknown server " + remote)
+		}
+		cid := g.uuid()
+		var tp obj
+		var typ string
+		if s.Kind == "wireguard" {
+			typ = "wireguardpeer"
+			tp = obj{"name": t.Name, "description": t.Description, "allowedIPs": strs(t.Networks), "publicKey": g.wgKey()}
+			if remote != "" {
+				tp["endpoint"] = obj{"host": remote, "port": t.Port}
+			}
+		} else {
+			typ = "ipsectunnel"
+			tp = obj{
+				"name": t.Name, "description": t.Description, "remoteHost": remote,
+				"auth":              obj{"method": "PSK"},
+				"ike":               obj{"diffieHellmanGroup": "16-MODP4096", "encryptionAlgorithm": "AES256", "integrityAlgorithm": "SHA256", "lifetime": 86400},
+				"esp":               obj{"diffieHellmanGroup": "16-MODP4096", "encryptionAlgorithm": "AES256", "integrityAlgorithm": "SHA256", "lifetime": 3600},
+				"cloudNetworkCIDRs": []any{l.sub.base + ".0/24"},
+				"peerNetworkCIDRs":  strs(t.Networks),
+			}
+		}
+		children = append(children, obj{"id": cid, "type": typ, "href": childHref + cid, "metadata": g.vpnMeta(), "properties": tp})
+	}
+	if s.Kind == "wireguard" {
+		props["interfaceIPv4CIDR"] = "192.168.77.1/24"
+		props["listenPort"] = 51820
+		props["publicKey"] = g.wgKey()
+	} else {
+		props["version"] = "IKEv2"
+	}
+	if g.vpn[region] == nil {
+		g.vpn[region] = map[string][]any{}
+	}
+	g.vpn[region][s.Kind] = append(g.vpn[region][s.Kind], obj{"id": id, "type": strings.TrimSuffix(coll, "s"), "href": href, "metadata": g.vpnMeta(), "properties": props})
+	g.vpnChildren[id] = children
+}
+
+// vpnMeta is the metadata shape of the VPN Gateway API (status, not state).
+func (g *gen) vpnMeta() obj {
+	m := g.meta("AVAILABLE")
+	delete(m, "etag")
+	delete(m, "state")
+	m["status"] = "AVAILABLE"
+	return m
+}
+
+func (g *gen) wgKey() string {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(g.rng.Intn(256))
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func strs(list []string) []any {
+	out := make([]any, len(list))
+	for i, s := range list {
+		out[i] = s
+	}
+	return out
 }
 
 // --- IP management -------------------------------------------------------------
@@ -684,7 +847,12 @@ func (g *gen) emitAll() {
 	for _, d := range g.dcs {
 		dcItems = append(dcItems, g.dcObject(d))
 		base := "/datacenters/" + d.id
-		g.emit(cloudAPI, "/datacenters/{datacenterId}/servers", base+"/servers", "depth=4", g.collection(base+"/servers", d.servers))
+		g.emit(cloudAPI, "/datacenters/{datacenterId}/servers", base+"/servers", "depth=5", g.collection(base+"/servers", d.servers))
+		sgs := []any{}
+		for _, sg := range d.sgs {
+			sgs = append(sgs, sg.obj)
+		}
+		g.emit(cloudAPI, "/datacenters/{datacenterId}/securitygroups", base+"/securitygroups", "depth=3", g.collection(base+"/securitygroups", sgs))
 		g.emit(cloudAPI, "/datacenters/{datacenterId}/volumes", base+"/volumes", "depth=1", g.collection(base+"/volumes", d.volumes))
 		g.emit(cloudAPI, "/datacenters/{datacenterId}/lans", base+"/lans", "depth=1", g.collection(base+"/lans", g.lanItems(d)))
 		g.emit(cloudAPI, "/datacenters/{datacenterId}/natgateways", base+"/natgateways", "depth=3", g.collection(base+"/natgateways", d.nats))
@@ -761,10 +929,30 @@ func (g *gen) emitAll() {
 		})
 	}
 
-	g.emit(pgAPI, "/clusters", "/clusters", "", obj{
-		"id": "clusters", "type": "collection", "href": pgBase + "/clusters",
-		"items": nonNil(g.postgres), "offset": 0, "limit": len(g.postgres), "_links": obj{},
-	})
+	for _, region := range endpoints.VPNRegions {
+		api, base := endpoints.VPNAPI(region), "https://vpn."+region+".ionos.com"
+		for _, kind := range []string{"ipsec", "wireguard"} {
+			coll, child, param := "/ipsecgateways", "tunnels", "{gatewayId}"
+			if kind == "wireguard" {
+				coll, child = "/wireguardgateways", "peers"
+			}
+			gws := g.vpn[region][kind]
+			g.emit(api, coll, coll, "", vpnCollection(base+coll, gws))
+			for _, gw := range gws {
+				id := gw.(obj)["id"].(string)
+				p := coll + "/" + id + "/" + child
+				g.emit(api, coll+"/"+param+"/"+child, p, "", vpnCollection(base+p, g.vpnChildren[id]))
+			}
+		}
+	}
+
+	for _, region := range endpoints.PostgresRegions {
+		clusters := g.postgres[region]
+		g.emit(endpoints.PostgresAPI(region), "/clusters", "/clusters", "", obj{
+			"id": "clusters", "type": "collection", "href": "https://postgresql." + region + ".ionos.com/clusters",
+			"items": nonNil(clusters), "offset": 0, "limit": len(clusters), "_links": obj{},
+		})
+	}
 }
 
 func (g *gen) dcObject(d *dc) obj {
@@ -840,6 +1028,12 @@ func (g *gen) collection(path string, items []any) obj {
 		"id": strings.TrimPrefix(strings.ReplaceAll(path, "/", "-"), "-"), "type": "collection", "href": cloudBase + path,
 		"items": nonNil(items), "offset": 0, "limit": len(nonNil(items)), "_links": obj{},
 	}
+}
+
+// vpnCollection mimics a VPN Gateway API list after merging pages.
+func vpnCollection(href string, items []any) obj {
+	return obj{"id": href[strings.LastIndex(href, "/")+1:], "type": "collection", "href": href,
+		"items": nonNil(items), "offset": 0, "limit": len(nonNil(items)), "_links": obj{}}
 }
 
 // entityCollection mimics a collection embedded in a parent via ?depth.

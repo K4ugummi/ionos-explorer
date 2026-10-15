@@ -1,0 +1,39 @@
+{
+  "contract": 31812345,
+  "format": "ionos-explorer-annotations",
+  "ips": [
+    {
+      "ips": [
+        "10.166.178.254"
+      ],
+      "nic": "82b699bd-04a6-49f1-8b32-3679e30400d7",
+      "note": "Re-addressed in the VM during the DR test; DCD not updated"
+    }
+  ],
+  "links": [
+    {
+      "from": "f04257bc-4c79-4625-b2e2-0f8ed94ee62b",
+      "id": "demo-link-1",
+      "label": "IPsec (in the VMs)",
+      "note": "Configured on the Catalyst 8000V pair, not visible in the API",
+      "to": "681ee30a-4f85-4010-bc95-c00d5f6f0c6b"
+    },
+    {
+      "from": "8c815f90-2e80-45fc-a19e-ccb51b656d37",
+      "id": "demo-link-2",
+      "label": "IPsec backup",
+      "to": "site:demo-head-office"
+    }
+  ],
+  "sites": [
+    {
+      "hosts": [
+        "192.0.2.10"
+      ],
+      "id": "demo-head-office",
+      "name": "Head office",
+      "note": "Office firewall; reached by the managed VPN and the London ASA"
+    }
+  ],
+  "version": 1
+}

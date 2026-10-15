@@ -46,8 +46,8 @@ func start(t *testing.T, api *fakeapi.Server) (Config, *httptest.Server) {
 		Backoff:     time.Millisecond,
 	})
 	bases := map[string]string{}
-	for id, p := range fakeapi.Prefixes {
-		bases[id] = srv.URL + p
+	for _, a := range endpoints.APIs {
+		bases[a.ID] = srv.URL + a.Prefix()
 	}
 	return Config{
 		Client: client, BaseURLs: bases, Version: "test",
@@ -112,7 +112,7 @@ func TestExportReproducesTheAPI(t *testing.T) {
 	if !m.CreatedAt.Equal(time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)) {
 		t.Errorf("createdAt %v", m.CreatedAt)
 	}
-	if len(m.APIs) != 2 || !strings.HasSuffix(m.APIs[0].BaseURL, "/cloudapi/v6") {
+	if len(m.APIs) != len(endpoints.APIs) || !strings.HasSuffix(m.APIs[0].BaseURL, "/api.ionos.com/cloudapi/v6") || m.APIs[1].Region != "de-fra" {
 		t.Errorf("apis %+v", m.APIs)
 	}
 	// /um/users and /um/groups are forbidden in the demo contract.
@@ -152,15 +152,17 @@ func TestExportIsDeterministic(t *testing.T) {
 }
 
 func TestPlanMatchesTheFixture(t *testing.T) {
-	// The fixture stands in for real exports; it must cover the same requests.
+	// The fixture stands in for real exports; it must cover the same requests
+	// (per API family: regions without VPN gateways have no tunnel lists).
+	family := func(api string) string { return strings.SplitN(api, "-", 2)[0] }
 	type key struct{ api, endpoint, query string }
 	plan := map[key]bool{}
 	for _, ep := range endpoints.Plan {
-		plan[key{ep.API, ep.Path, ep.Query}] = true
+		plan[key{family(ep.API), ep.Path, ep.Query}] = true
 	}
 	seen := map[key]bool{}
 	for _, c := range demo(t).Manifest.Coverage {
-		k := key{c.API, c.Endpoint, c.Query}
+		k := key{family(c.API), c.Endpoint, c.Query}
 		if !plan[k] {
 			t.Errorf("fixture has %+v, which the exporter does not fetch", k)
 		}
@@ -171,13 +173,13 @@ func TestPlanMatchesTheFixture(t *testing.T) {
 			t.Errorf("the exporter fetches %+v, which the fixture lacks", k)
 		}
 	}
-	for _, a := range endpoints.APIs {
-		found := false
-		for _, b := range demo(t).Manifest.APIs {
-			found = found || (a.ID == b.ID && a.BaseURL == b.BaseURL)
-		}
-		if !found {
-			t.Errorf("API %s differs from the fixture", a.ID)
+	apis := demo(t).Manifest.APIs
+	if len(apis) != len(endpoints.APIs) {
+		t.Errorf("fixture has %d APIs, the exporter %d", len(apis), len(endpoints.APIs))
+	}
+	for i, a := range endpoints.APIs {
+		if i < len(apis) && (apis[i].ID != a.ID || apis[i].BaseURL != a.BaseURL || apis[i].Region != a.Region) {
+			t.Errorf("API %s differs from the fixture: %+v", a.ID, apis[i])
 		}
 	}
 }
@@ -215,7 +217,7 @@ func TestFailuresAreRecordedNotFatal(t *testing.T) {
 		return true
 	}
 	cfg, _ := start(t, api)
-	cfg.Skip = []string{"/um", endpoints.PostgresAPI}
+	cfg.Skip = []string{"/um", "postgresql"}
 	res, got := export(t, cfg)
 
 	status := map[string]map[string]int{}
@@ -239,7 +241,7 @@ func TestFailuresAreRecordedNotFatal(t *testing.T) {
 	check("/datacenters/{datacenterId}/lans", "ok", 14, "")
 	check("/images", "error", 1, "not a JSON object")
 	check("/um/users", "skipped", 1, errExcluded)
-	check("/clusters", "skipped", 1, errExcluded)
+	check("/clusters", "skipped", len(endpoints.PostgresRegions), errExcluded)
 	if !res.Partial() {
 		t.Error("should be partial")
 	}
@@ -275,6 +277,47 @@ func TestRefusesUnusableIDs(t *testing.T) {
 		if strings.Contains(p, "..") {
 			t.Errorf("file %s", p)
 		}
+	}
+}
+
+func TestSecretsNeverReachTheSnapshot(t *testing.T) {
+	const secret = "hunter2-do-not-store"
+	api := fake(t, demo(t), 100)
+	api.Intercept = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/postgresql.de-fra.ionos.com/clusters" {
+			return false
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{
+			"id": "c1", "properties": map[string]any{
+				"name":        "pg",
+				"credentials": map[string]any{"username": "admin", "Password": secret},
+				"tunnels":     []any{map[string]any{"preSharedKey": secret, "psk": ""}},
+			},
+		}}})
+		return true
+	}
+	cfg, _ := start(t, api)
+	res, got := export(t, cfg)
+	var buf bytes.Buffer
+	if err := res.Writer.WriteTo(&buf, snapshot.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte(secret)) {
+		t.Fatal("a secret ended up in the snapshot")
+	}
+	var doc struct {
+		Items []struct {
+			Properties struct {
+				Name        string
+				Credentials map[string]string
+			}
+		}
+	}
+	if err := json.Unmarshal(got.Files["raw/postgresql-v2-de-fra/clusters.json"], &doc); err != nil || len(doc.Items) != 1 {
+		t.Fatal(err, doc)
+	}
+	if c := doc.Items[0].Properties.Credentials; c["username"] != "admin" || c["Password"] != Redacted {
+		t.Errorf("credentials %v", c)
 	}
 }
 

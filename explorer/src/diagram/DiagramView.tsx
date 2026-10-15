@@ -17,7 +17,7 @@ import { elk } from './elk'
 import { absolutePositions, layoutDiagram } from './layout'
 import { DiagramActions, toFlow, type FlowEdge, type FlowNode } from './flow'
 import { midpoint } from './geometry'
-import { BoxNode, DcNode, GroupNode, InternetNode, PeerNode, RoutedEdge } from './render'
+import { BoxNode, DcNode, ExternalNode, GroupNode, InternetNode, PeerNode, RoutedEdge } from './render'
 import type { Diagram, Layout } from './types'
 
 export interface DiagramViewProps {
@@ -51,6 +51,7 @@ const nodeTypes = {
   resource: BoxNode,
   member: BoxNode,
   internet: InternetNode,
+  external: ExternalNode,
 } as NodeTypes
 const edgeTypes = { routed: RoutedEdge } as EdgeTypes
 
@@ -208,9 +209,15 @@ function Legend({ datacenter }: { datacenter: boolean }) {
         ['lan', 'LAN attachment'],
         ['internet', 'Internet'],
         ['cross-connect', 'Cross Connect'],
+        ['tunnel', 'VPN tunnel'],
+        ['manual', 'Manual link'],
         ['target', 'Load balancer target (on selection)'],
       ]
-    : [['cross-connect', 'Cross Connect']]
+    : [
+        ['cross-connect', 'Cross Connect'],
+        ['tunnel', 'VPN tunnel'],
+        ['manual', 'Manual link'],
+      ]
   return (
     <ul className="dg-legend" aria-label="Legend">
       {items.map(([kind, label]) => (

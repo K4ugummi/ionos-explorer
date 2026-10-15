@@ -1,6 +1,6 @@
 // Package export fetches every collection in the endpoint plan and turns the
 // responses into a snapshot. It stores what the API returns, merging pages
-// but not interpreting anything; the explorer does that.
+// and removing secrets but not interpreting anything; the explorer does that.
 package export
 
 import (
@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,7 +136,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	for _, a := range endpoints.APIs {
 		if used[a.ID] {
-			m.APIs = append(m.APIs, snapshot.API{ID: a.ID, Name: a.Name, Version: a.Version, BaseURL: x.base(a.ID)})
+			m.APIs = append(m.APIs, snapshot.API{ID: a.ID, Name: a.Name, Version: a.Version, BaseURL: x.base(a.ID), Region: a.Region})
 		}
 	}
 	for _, f := range x.done {
@@ -319,6 +320,7 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 		if err := dec.Decode(&body); err != nil || body == nil {
 			return fail(snapshot.StatusError, resp.Status, "response is not a JSON object")
 		}
+		redact(body)
 		got, isList := body["items"].([]any)
 		if doc == nil {
 			doc = body
@@ -354,6 +356,33 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 	cov.Status = snapshot.StatusOK
 	cov.File = snapshot.RawFile(ep.API, path)
 	return x.record(cov, doc)
+}
+
+// secretKeys are fields that may hold a secret in some API's response, e.g.
+// credentials.password in PostgreSQL v2. The APIs are not supposed to return
+// them; should one do so anyway, it never reaches the snapshot.
+var secretKeys = map[string]bool{
+	"password": true, "imagepassword": true, "presharedkey": true, "psk": true, "privatekey": true, "secret": true,
+}
+
+// Redacted replaces any secret value in a snapshot.
+const Redacted = "[removed by ionos-export]"
+
+func redact(v any) {
+	switch v := v.(type) {
+	case map[string]any:
+		for k, x := range v {
+			if s, ok := x.(string); ok && s != "" && secretKeys[strings.ToLower(k)] {
+				v[k] = Redacted
+			} else {
+				redact(x)
+			}
+		}
+	case []any:
+		for _, x := range v {
+			redact(x)
+		}
+	}
 }
 
 func contract(doc map[string]any) *snapshot.Contract {

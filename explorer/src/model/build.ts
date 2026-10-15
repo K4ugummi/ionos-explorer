@@ -1,4 +1,5 @@
 import type { Coverage, Snapshot } from '../snapshot/types'
+import { detectAppliances } from './appliances'
 import { KINDS, subtypeLabel } from './kinds'
 import { arr, entityItems, isObj, items, num, obj, props, str, strs, type Obj } from './raw'
 import type { CoverageIssue, EdgeKind, Fact, GraphEdge, GraphNode, Model } from './types'
@@ -59,12 +60,11 @@ class Builder {
     this.catalogs()
     this.each('cloudapi /datacenters', (d) => items(d.doc).forEach((dc) => this.datacenter(dc)))
     this.each('cloudapi /datacenters/{datacenterId}/lans', (d) => this.lans(d))
-    this.each('cloudapi /datacenters/{datacenterId}/volumes', (d) =>
-      items(d.doc).forEach((v) => this.volume(v, d.params.datacenterId)),
+    this.each('cloudapi /datacenters/{datacenterId}/volumes', (d) => items(d.doc).forEach((v) => this.volume(v, d.params.datacenterId)))
+    this.each('cloudapi /datacenters/{datacenterId}/securitygroups', (d) =>
+      items(d.doc).forEach((g) => this.securityGroup(g, d.params.datacenterId)),
     )
-    this.each('cloudapi /datacenters/{datacenterId}/servers', (d) =>
-      items(d.doc).forEach((s) => this.server(s, d.params.datacenterId)),
-    )
+    this.each('cloudapi /datacenters/{datacenterId}/servers', (d) => items(d.doc).forEach((s) => this.server(s, d.params.datacenterId)))
     this.each('cloudapi /datacenters/{datacenterId}/natgateways', (d) =>
       items(d.doc).forEach((n) => this.natGateway(n, d.params.datacenterId)),
     )
@@ -78,12 +78,18 @@ class Builder {
     this.each('cloudapi /targetgroups', (d) => items(d.doc).forEach((tg) => this.targetGroup(tg, albTargetLANs)))
     this.each('cloudapi /pccs', (d) => items(d.doc).forEach((p) => this.pcc(p)))
     this.linkLANsToPCCs()
+    // VPN gateways before IP blocks (their public IPs are consumers) and after
+    // everything a tunnel can end at.
+    this.each('vpn /ipsecgateways', (d) => items(d.doc).forEach((g) => this.vpnGateway(g, 'IPsec', d.cov.api)))
+    this.each('vpn /wireguardgateways', (d) => items(d.doc).forEach((g) => this.vpnGateway(g, 'WireGuard', d.cov.api)))
+    this.each('vpn /ipsecgateways/{gatewayId}/tunnels', (d) => items(d.doc).forEach((t) => this.vpnTunnel(t, d.params.gatewayId, 'IPsec')))
+    this.each('vpn /wireguardgateways/{gatewayId}/peers', (d) =>
+      items(d.doc).forEach((t) => this.vpnTunnel(t, d.params.gatewayId, 'WireGuard')),
+    )
     this.each('cloudapi /ipblocks', (d) => items(d.doc).forEach((b) => this.ipBlock(b)))
     this.each('cloudapi /k8s', (d) => items(d.doc).forEach((c) => this.k8s(c)))
-    this.each('cloudapi /k8s/{k8sClusterId}/nodepools', (d) =>
-      items(d.doc).forEach((np) => this.nodePool(np, d.params.k8sClusterId)),
-    )
-    this.each('postgresql /clusters', (d) => items(d.doc).forEach((c) => this.postgres(c)))
+    this.each('cloudapi /k8s/{k8sClusterId}/nodepools', (d) => items(d.doc).forEach((np) => this.nodePool(np, d.params.k8sClusterId)))
+    this.each('postgresql /clusters', (d) => items(d.doc).forEach((c) => this.postgres(c, d.cov.api)))
     this.each('cloudapi /labels', (d) => items(d.doc).forEach((l) => this.label(l)))
     for (const list of this.docs.values()) list.forEach((d) => this.generic(d))
     return this.finish()
@@ -201,7 +207,9 @@ class Builder {
     const id = str(dc.id)
     if (!id) return
     const p = props(dc)
-    const cpus = arr(p.cpuArchitecture).map((c) => str(obj(c).cpuFamily)).filter(Boolean)
+    const cpus = arr(p.cpuArchitecture)
+      .map((c) => str(obj(c).cpuFamily))
+      .filter(Boolean)
     this.add({
       id,
       kind: 'datacenter',
@@ -229,7 +237,9 @@ class Builder {
     for (const lan of items(d.doc)) {
       const p = props(lan)
       const id = this.lanId(dcId, lan.id)
-      const failover = arr(p.ipFailover).map((f) => str(obj(f).ip)).filter((ip): ip is string => !!ip)
+      const failover = arr(p.ipFailover)
+        .map((f) => str(obj(f).ip))
+        .filter((ip): ip is string => !!ip)
       this.add({
         id,
         kind: 'lan',
@@ -325,6 +335,7 @@ class Builder {
       terms: compact([templateName]),
       raw: s,
     })
+    this.securedBy(s, id, dcId)
 
     for (const nic of nics) {
       const nicId = str(nic.id)
@@ -344,6 +355,7 @@ class Builder {
         state: state(nic),
         ips: [...ips, ...strs(np.ipv6Ips)],
         macs: mac ? [mac] : [],
+        dhcp: typeof np.dhcp === 'boolean' ? np.dhcp : undefined,
         facts: compact([
           fact('Server', server.name),
           fact('LAN', this.lanName(dcId, np.lan)),
@@ -351,12 +363,13 @@ class Builder {
           fact('MAC', mac),
           fact('DHCP', np.dhcp === true ? 'yes' : np.dhcp === false ? 'no' : undefined),
           fact('Firewall', np.firewallActive === true ? `active (${str(np.firewallType) ?? 'INGRESS'})` : 'inactive'),
-          fact('Firewall rules', rules.map(ruleSummary).join(', ')),
+          fact('Firewall rules', rulesSummary(rules)),
           ...metaFacts(nic),
         ]),
         terms: rules.map((r) => str(props(r).name) ?? ''),
         raw: nic,
       })
+      this.securedBy(nic, nicId, dcId)
       server.ips.push(...ips)
       if (mac) server.macs.push(mac)
       this.edge('attached', nicId, lan)
@@ -504,14 +517,23 @@ class Builder {
       if (this.nodes.has(lan)) this.edge('cross-connect', lan, id)
       else invisible.push(`${str(peer.datacenterName) ?? dcId} / ${str(peer.name) ?? str(peer.id)}`)
     }
+    // Not the same as peers we cannot see: the API lists every peer, even in
+    // datacenters the token cannot read.
+    const status = !peers.length
+      ? (['unused', 'No LAN is connected to this Cross Connect.'] as const)
+      : peers.length === 1
+        ? (['one LAN', 'Only one LAN is connected, so it links nothing yet.'] as const)
+        : undefined
     this.add({
       id,
       kind: 'pcc',
+      subtype: status?.[0],
       name: str(p.name) || id,
       parentId: ROOT_ID,
       location: str(obj(peers[0]).location),
       state: state(c),
       facts: compact([
+        fact('Status', status?.[1]),
         fact('Description', str(p.description)),
         fact('Peers', String(peers.length)),
         fact('Peer LANs', peers.map((pr) => `${str(pr.datacenterName) ?? '?'} / ${str(pr.name) ?? str(pr.id)}`).join('; ')),
@@ -621,40 +643,212 @@ class Builder {
     if (dcId) lans.forEach((l) => this.edge('member', id, this.lanId(dcId, l.id)))
   }
 
-  private postgres(c: Obj) {
+  /** PostgreSQL v2 (regional), and v1 (global, shut down 2026) for older snapshots. */
+  /** Network Security Groups: firewall rule sets shared by servers and NICs. */
+  private securityGroup(g: Obj, dcId: string) {
+    const id = str(g.id)
+    if (!id || this.nodes.get(id)?.placeholder === false) return
+    const p = props(g)
+    const dc = this.dcNode(dcId)
+    const rules = entityItems(g, 'rules')
+    this.add({
+      id,
+      kind: 'securitygroup',
+      name: str(p.name) || id,
+      parentId: dc ? dcId : ROOT_ID,
+      dcId: dc ? dcId : undefined,
+      location: dc?.location,
+      state: state(g),
+      facts: compact([fact('Description', str(p.description)), fact('Rules', rulesSummary(rules)), ...metaFacts(g)]),
+      terms: compact([str(p.description), ...rules.map((r) => str(props(r).name))]),
+      raw: g,
+    })
+    for (const m of [...entityItems(g, 'servers'), ...entityItems(g, 'nics')]) this.edge('secured-by', str(m.id), id)
+  }
+
+  /** Edges from a server or NIC to its Security Groups (also adds groups the list missed). */
+  private securedBy(o: Obj, from: string, dcId: string) {
+    for (const g of entityItems(o, 'securitygroups')) {
+      const id = str(g.id)
+      if (!id) continue
+      if (!this.nodes.has(id) && isObj(g.properties)) this.securityGroup(g, dcId)
+      this.edge('secured-by', from, id)
+    }
+  }
+
+  private postgres(c: Obj, api: string) {
     const id = str(c.id)
     if (!id) return
     const p = props(c)
-    const conns = arr(p.connections).map(obj)
+    const meta = obj(c.metadata)
+    const v2 = isObj(p.instances) || isObj(p.connection)
+    const inst = obj(p.instances)
+    const conns = (isObj(p.connection) ? [p.connection] : arr(p.connections)).map(obj)
+    const addr = (x: Obj) => str(x.primaryInstanceAddress) ?? str(x.cidr)
     const dcId = str(conns[0]?.datacenterId)
-    const ips = conns.flatMap((x) => (str(x.cidr) ? [stripCidr(str(x.cidr)!)] : []))
+    const region = this.snapshot.manifest.apis.find((a) => a.id === api)?.region
+    const dnsName = str(meta.dnsName) ?? str(p.dnsName)
+    // v2 sizes are GB per instance, v1 sizes were MB.
+    const size = (v: unknown) => (v2 ? (num(v) !== undefined ? `${num(v)} GB` : undefined) : gb(v))
+    const backup = obj(p.backup)
     this.add({
       id,
       kind: 'postgres',
-      name: str(p.displayName) || id,
+      name: str(p.name) || str(p.displayName) || id,
       parentId: ROOT_ID,
       dcId,
-      location: str(p.location),
+      location: str(p.location) ?? this.dcNode(dcId)?.location ?? region?.replace('-', '/'),
       state: state(c),
-      ips,
+      ips: compact(conns.map((x) => (addr(x) ? stripCidr(addr(x)!) : undefined))),
       facts: compact([
-        fact('PostgreSQL', str(p.postgresVersion)),
-        fact('Instances', str(p.instances)),
-        fact('Cores', str(p.cores)),
-        fact('RAM', gb(p.ram)),
-        fact('Storage', `${gb(p.storageSize) ?? '?'} ${str(p.storageType) ?? ''}`.trim()),
-        fact('DNS name', str(p.dnsName)),
-        fact('Connections', conns.map((x) => `${this.dcNode(str(x.datacenterId))?.name ?? str(x.datacenterId)} / ${this.lanName(str(x.datacenterId) ?? '', x.lanId)} (${str(x.cidr)})`).join('; ')),
+        fact('PostgreSQL', str(p.version) ?? str(p.postgresVersion)),
+        fact('Description', str(p.description)),
+        fact('Status', str(meta.statusMessage)),
+        fact('Instances', str(inst.count) ?? str(p.instances)),
+        fact('Cores', str(inst.cores) ?? str(p.cores)),
+        fact('RAM', size(inst.ram ?? p.ram)),
+        fact('Storage', `${size(inst.storageSize ?? p.storageSize) ?? '?'} ${str(p.storageType) ?? ''}`.trim()),
+        fact('Replication', str(p.replicationMode) ?? str(p.synchronizationMode)),
+        fact('Connection pooler', str(p.connectionPooler)),
+        fact('DNS name', dnsName),
+        fact(
+          'Connections',
+          conns
+            .map(
+              (x) =>
+                `${this.dcNode(str(x.datacenterId))?.name ?? str(x.datacenterId)} / ${this.lanName(str(x.datacenterId) ?? '', x.lanId)} (${addr(x)})`,
+            )
+            .join('; '),
+        ),
+        fact(
+          'Backups',
+          str(backup.location)
+            ? `${str(backup.location)}${num(backup.retentionDays) ? `, kept ${num(backup.retentionDays)} days` : ''}`
+            : str(p.backupLocation),
+        ),
         fact('Maintenance', maintenance(p.maintenanceWindow)),
         ...metaFacts(c),
       ]),
-      terms: compact([str(p.dnsName)]),
+      terms: compact([dnsName]),
       raw: c,
     })
     for (const x of conns) {
       const dc = str(x.datacenterId)
-      if (dc) this.edge('connection', id, this.lanId(dc, x.lanId), str(x.cidr))
+      if (dc) this.edge('connection', id, this.lanId(dc, x.lanId), addr(x))
     }
+  }
+
+  private vpnGateway(g: Obj, flavor: 'IPsec' | 'WireGuard', api: string) {
+    const id = str(g.id)
+    if (!id) return
+    const p = props(g)
+    const conns = arr(p.connections).map(obj)
+    const firstDc = str(conns[0]?.datacenterId)
+    const dc = this.dcNode(firstDc)
+    const gatewayIP = str(p.gatewayIP)
+    const region = this.snapshot.manifest.apis.find((a) => a.id === api)?.region
+    this.add({
+      id,
+      kind: 'vpngateway',
+      subtype: flavor,
+      name: str(p.name) || id,
+      parentId: dc ? dc.id : ROOT_ID,
+      dcId: dc?.id,
+      location: dc?.location ?? region?.replace('-', '/'),
+      state: state(g),
+      ips: compact([gatewayIP, ...conns.map((c) => (str(c.ipv4CIDR) ? stripCidr(str(c.ipv4CIDR)!) : undefined))]),
+      facts: compact([
+        fact('Type', `${flavor} VPN gateway`),
+        fact('Description', str(p.description)),
+        fact('Public IP', gatewayIP),
+        fact(
+          'Connections',
+          conns
+            .map(
+              (c) =>
+                `${this.dcNode(str(c.datacenterId))?.name ?? str(c.datacenterId)} / ${this.lanName(str(c.datacenterId) ?? '', c.lanId)} (${str(c.ipv4CIDR) ?? '?'})`,
+            )
+            .join('; '),
+        ),
+        fact('IKE version', str(p.version)),
+        fact('Interface', str(p.interfaceIPv4CIDR)),
+        fact('Listen port', str(p.listenPort)),
+        fact('Tier', str(p.tier)),
+        fact('Region', region),
+        fact('Maintenance', maintenance(p.maintenanceWindow)),
+        ...metaFacts(g),
+      ]),
+      terms: compact([str(p.description), str(p.publicKey)]),
+      raw: g,
+    })
+    if (gatewayIP) this.publicIPs.set(gatewayIP, id)
+    for (const c of conns) {
+      const dcId = str(c.datacenterId)
+      if (dcId) this.edge('connection', id, this.lanId(dcId, c.lanId), str(c.ipv4CIDR))
+    }
+  }
+
+  private vpnTunnel(t: Obj, gatewayId: string, flavor: 'IPsec' | 'WireGuard') {
+    const id = str(t.id)
+    if (!id) return
+    const p = props(t)
+    const gw = this.nodes.get(gatewayId)
+    const endpoint = obj(p.endpoint)
+    const host = flavor === 'IPsec' ? str(p.remoteHost) : str(endpoint.host)
+    const networks = flavor === 'IPsec' ? strs(p.peerNetworkCIDRs) : strs(p.allowedIPs)
+    const crypto = (o: unknown) => {
+      const c = obj(o)
+      return compact([str(c.encryptionAlgorithm), str(c.integrityAlgorithm), str(c.diffieHellmanGroup)]).join(' / ') || undefined
+    }
+    const tunnel = this.add({
+      id,
+      kind: 'vpntunnel',
+      subtype: flavor === 'IPsec' ? 'IPsec tunnel' : 'WireGuard peer',
+      name: str(p.name) || id,
+      parentId: gw ? gatewayId : ROOT_ID,
+      dcId: gw?.dcId,
+      location: gw?.location,
+      state: state(t),
+      ips: host && isIP(host) ? [host] : [],
+      facts: compact([
+        fact('Gateway', gw?.name),
+        fact('Description', str(p.description)),
+        fact(
+          'Remote host',
+          host ? (str(endpoint.port) ? `${host}:${str(endpoint.port)}` : host) : 'none (the peer connects from anywhere)',
+        ),
+        fact(flavor === 'IPsec' ? 'Remote networks' : 'Allowed IPs', networks.join(', ')),
+        fact('Local networks', strs(p.cloudNetworkCIDRs).join(', ')),
+        fact('Authentication', str(obj(p.auth).method)),
+        fact('IKE', crypto(p.ike)),
+        fact('ESP', crypto(p.esp)),
+        ...metaFacts(t),
+      ]),
+      terms: compact([str(p.description), host, ...networks, ...strs(p.cloudNetworkCIDRs), str(p.publicKey)]),
+      raw: t,
+    })
+    if (host) this.edge('tunnel', tunnel.id, this.remoteEnd(host), host)
+  }
+
+  /** What a remote host is: a resource of this contract, or an external endpoint. */
+  private remoteEnd(host: string): string {
+    const local = this.publicIPs.get(host)
+    if (local) {
+      const n = this.nodes.get(local)
+      return n?.kind === 'nic' && n.parentId ? n.parentId : local
+    }
+    const id = `ext:${host}`
+    this.add({
+      id,
+      kind: 'external',
+      subtype: 'Remote host',
+      name: host,
+      parentId: ROOT_ID,
+      ips: isIP(host) ? [host] : [],
+      facts: [{ label: 'What', value: 'Remote end of a VPN tunnel, outside this contract' }],
+      terms: [host],
+    })
+    return id
   }
 
   private label(l: Obj) {
@@ -676,7 +870,7 @@ class Builder {
         id,
         kind: 'other',
         subtype: `${d.cov.api} ${d.cov.endpoint}`,
-        name: str(p.name) ?? str(p.displayName) ?? str(it.name) ?? id,
+        name: str(p.name) ?? str(p.displayName) ?? str(it.name) ?? personName(p) ?? id,
         parentId: this.dcNode(dcId) ? dcId : ROOT_ID,
         dcId: this.dcNode(dcId) ? dcId : undefined,
         location: str(p.location) ?? this.dcNode(dcId)?.location,
@@ -690,28 +884,15 @@ class Builder {
   // --- finishing -----------------------------------------------------------------
 
   private finish(): Model {
-    const children = new Map<string, string[]>()
     for (const n of this.nodes.values()) {
       if (n.parentId && !this.nodes.has(n.parentId)) {
         this.warnings.push(`${KINDS[n.kind].label} ${n.name} references missing parent ${n.parentId}.`)
         n.parentId = ROOT_ID
       }
-      if (n.parentId) {
-        const list = children.get(n.parentId) ?? []
-        list.push(n.id)
-        children.set(n.parentId, list)
-      }
     }
-    const edgesByNode = new Map<string, GraphEdge[]>()
-    this.edges = this.edges.filter((e) => {
-      if (!this.nodes.has(e.from) || !this.nodes.has(e.to)) return false
-      for (const id of [e.from, e.to]) {
-        const list = edgesByNode.get(id) ?? []
-        list.push(e)
-        edgesByNode.set(id, list)
-      }
-      return true
-    })
+    const children = indexChildren(this.nodes.values())
+    this.edges = this.edges.filter((e) => this.nodes.has(e.from) && this.nodes.has(e.to))
+    const edgesByNode = indexEdges(this.edges)
 
     // Datacenter summary facts need the finished tree.
     for (const n of this.nodes.values()) {
@@ -725,28 +906,7 @@ class Builder {
       n.facts.splice(1, 0, ...[...counts].sort().map(([label, count]) => fact(label, String(count))!))
     }
 
-    for (const n of this.nodes.values()) {
-      n.ips = [...new Set(n.ips)]
-      n.macs = [...new Set(n.macs)]
-      n.searchText = [
-        n.name,
-        n.id,
-        KINDS[n.kind].label,
-        subtypeLabel(n.kind, n.subtype),
-        n.subtype,
-        n.location,
-        n.state,
-        ...n.ips,
-        ...n.macs,
-        ...Object.entries(n.labels).map(([k, v]) => `${k}=${v}`),
-        ...n.terms,
-      ]
-        .filter(Boolean)
-        .join('\n')
-        .toLowerCase()
-    }
-
-    return {
+    const model: Model = {
       manifest: this.snapshot.manifest,
       rootId: ROOT_ID,
       nodes: this.nodes,
@@ -756,7 +916,55 @@ class Builder {
       coverageIssues: coverageIssues(this.snapshot.manifest.coverage),
       warnings: this.warnings,
     }
+    detectAppliances(model)
+    for (const n of this.nodes.values()) indexNode(n)
+    return model
   }
+}
+
+/** Dedupes addresses and builds the search haystack; call after changing a node. */
+export function indexNode(n: GraphNode) {
+  n.ips = [...new Set(n.ips)]
+  n.macs = [...new Set(n.macs)]
+  n.searchText = [
+    n.name,
+    n.id,
+    KINDS[n.kind].label,
+    subtypeLabel(n.kind, n.subtype),
+    n.subtype,
+    n.location,
+    n.state,
+    ...n.ips,
+    ...n.macs,
+    ...Object.entries(n.labels).map(([k, v]) => `${k}=${v}`),
+    ...n.terms,
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase()
+}
+
+export function indexEdges(edges: GraphEdge[]): Map<string, GraphEdge[]> {
+  const byNode = new Map<string, GraphEdge[]>()
+  for (const e of edges) {
+    for (const id of [e.from, e.to]) {
+      const list = byNode.get(id) ?? []
+      list.push(e)
+      byNode.set(id, list)
+    }
+  }
+  return byNode
+}
+
+export function indexChildren(nodes: Iterable<GraphNode>): Map<string, string[]> {
+  const children = new Map<string, string[]>()
+  for (const n of nodes) {
+    if (!n.parentId) continue
+    const list = children.get(n.parentId) ?? []
+    list.push(n.id)
+    children.set(n.parentId, list)
+  }
+  return children
 }
 
 // --- helpers -----------------------------------------------------------------------
@@ -800,7 +1008,12 @@ function compact<T>(list: (T | undefined)[]): T[] {
 }
 
 function state(o: Obj) {
-  return str(obj(o.metadata).state)
+  // The Cloud API says state; the newer regional APIs say status.
+  return str(obj(o.metadata).state) ?? str(obj(o.metadata).status)
+}
+
+function isIP(s: string) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(s) || (s.includes(':') && /^[0-9a-f:]+$/i.test(s))
 }
 
 function metaFacts(o: Obj): (Fact | undefined)[] {
@@ -812,7 +1025,7 @@ function metaFacts(o: Obj): (Fact | undefined)[] {
     return w ? `${d.replace('T', ' ').replace('Z', ' UTC')} by ${w}` : d
   }
   return [
-    fact('State', str(m.state)),
+    fact('State', str(m.state) ?? str(m.status)),
     fact('Created', by(m.createdDate, m.createdBy)),
     fact('Modified', by(m.lastModifiedDate, m.lastModifiedBy)),
   ]
@@ -845,6 +1058,19 @@ function maintenance(w: unknown) {
   const m = obj(w)
   const day = str(m.dayOfTheWeek)
   return day ? `${day} ${str(m.time) ?? ''}`.trim() : undefined
+}
+
+/** Rules at too low a depth are bare references without properties. */
+function rulesSummary(rules: Obj[]) {
+  if (!rules.length) return undefined
+  if (rules.every((r) => !isObj(r.properties))) return `${rules.length} (contents not in this snapshot)`
+  return rules.map(ruleSummary).join(', ')
+}
+
+/** Users have no name, only first name, last name and email. */
+function personName(p: Obj) {
+  const full = [str(p.firstname), str(p.lastname)].filter(Boolean).join(' ')
+  return full || str(p.email)
 }
 
 function ruleSummary(r: Obj) {

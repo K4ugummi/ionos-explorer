@@ -7,6 +7,7 @@ import { toFlow } from './flow'
 import { midpoint, roundedPath } from './geometry'
 import { absolutePositions, layoutDiagram } from './layout'
 import type { Diagram } from './types'
+import { addLink, addSite, applyAnnotations, EMPTY, siteNodeId } from '../annotations/annotations'
 
 const named = (m: Model, name: string) => [...m.nodes.values()].find((n) => n.name === name)!
 const node = (d: Diagram, id: string) => d.nodes.find((n) => n.id === id)!
@@ -40,7 +41,8 @@ describe('contract diagram', async () => {
     expect(edgesOf(d, hub.id)).toHaveLength(3)
 
     const legacy = node(d, `cc:${named(m, 'fra-legacy-link').id}`)
-    expect(node(d, legacy.parent!).data.title).toBe('No visible peers')
+    expect(node(d, legacy.parent!).data.title).toBe('Unused Cross Connects')
+    expect(legacy.data.subtitle).toBe('no LAN connected')
   })
 
   it('anchors resources to their datacenter card', () => {
@@ -121,7 +123,10 @@ describe('datacenter diagram', async () => {
 describe('layout', async () => {
   const m = await fixtureModel()
   const elk = new ELK()
-  const diagrams = [contractDiagram(m), ...[...m.nodes.values()].filter((n) => n.kind === 'datacenter').map((dc) => datacenterDiagram(m, dc.id))]
+  const diagrams = [
+    contractDiagram(m),
+    ...[...m.nodes.values()].filter((n) => n.kind === 'datacenter').map((dc) => datacenterDiagram(m, dc.id)),
+  ]
   const layouts = await Promise.all(diagrams.map((d) => layoutDiagram(d, elk)))
 
   it('places every node without overlapping its siblings', () => {
@@ -134,7 +139,10 @@ describe('layout', async () => {
         byParent.set(n.parent ?? '', [...(byParent.get(n.parent ?? '') ?? []), n])
         if (n.parent) {
           const [c, p] = [abs.get(n.id)!, abs.get(n.parent)!]
-          expect(c.x >= p.x && c.y >= p.y && c.x + c.width <= p.x + p.width + 0.5 && c.y + c.height <= p.y + p.height + 0.5, `${n.id} inside ${n.parent}`).toBe(true)
+          expect(
+            c.x >= p.x && c.y >= p.y && c.x + c.width <= p.x + p.width + 0.5 && c.y + c.height <= p.y + p.height + 0.5,
+            `${n.id} inside ${n.parent}`,
+          ).toBe(true)
         }
       }
       for (const siblings of byParent.values()) {
@@ -188,6 +196,68 @@ describe('layout', async () => {
     const idle = toFlow(l, d, undefined, null)
     expect(idle.edges.filter((e) => e.data?.kind === 'target').every((e) => e.hidden)).toBe(true)
     expect(idle.nodes.some((n) => n.data.dim)).toBe(false)
+  })
+})
+
+describe('VPN tunnels, appliances and manual links', async () => {
+  const snap = await fixtureModel()
+  const fraVpn = named(snap, 'fra-core-vpn-01').id
+  const txlVpn = named(snap, 'txl-core-vpn-01').id
+  const [withSite, site] = addSite(EMPTY, { name: 'Head office', hosts: ['192.0.2.10'] })
+  const m = applyAnnotations(snap, addLink(withSite, { from: fraVpn, to: txlVpn, label: 'IPsec in the VMs' })).model
+  const mgmt = named(m, 'fra-mgmt').id
+  const txl = named(m, 'txl-prod-core').id
+
+  it('draws tunnels and links between datacenters on the contract view', () => {
+    const d = contractDiagram(m)
+    const pair = (a: string, b: string) => [a, b].sort().join(' ↔ ')
+    const line = (kind: string) => d.edges.filter((e) => e.kind === kind).map((e) => [pair(e.source, e.target), e.label])
+    expect(line('tunnel')).toEqual([
+      [pair(mgmt, siteNodeId(site)), 'hq-office'],
+      [pair(mgmt, txl), 'txl-core'],
+      [pair(named(m, 'lhr-staging').id, 'ext:192.0.2.77'), 'build-agent-uk'],
+    ])
+    expect(line('manual')).toEqual([[pair(named(m, 'fra-prod-core').id, txl), 'IPsec in the VMs']])
+    const outside = d.nodes.filter((n) => n.parent === 'group:external').map((n) => n.data.title)
+    expect(outside).toEqual(['192.0.2.77', 'Head office'])
+    expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('3 appliances')
+    expect(d.anchors.get(named(m, 'txl-core').id)).toBe(d.edges.find((e) => e.label === 'txl-core')!.id)
+  })
+
+  it('shows a VPN gateway between the internet and its LAN, with its tunnels', () => {
+    const d = datacenterDiagram(m, mgmt)
+    const gw = named(m, 'vpngw-mgmt')
+    expect(node(d, gw.id).type).toBe('resource')
+    expect(edgesOf(d, gw.id).map((e) => [e.kind, node(d, e.source).data.title, node(d, e.target).data.title])).toEqual([
+      ['internet', 'Internet', 'vpngw-mgmt'],
+      ['lan', 'vpngw-mgmt', 'mgmt'],
+      ['tunnel', 'Head office', 'vpngw-mgmt'],
+      ['tunnel', 'txl-prod-core', 'vpngw-mgmt'],
+    ])
+    expect(node(d, `x:${siteNodeId(site)}`).type).toBe('external')
+    expect(node(d, `peer:${txl}`).type).toBe('peer')
+  })
+
+  it('tags appliances and draws manual links to the other datacenter', () => {
+    const d = datacenterDiagram(m, named(m, 'fra-prod-core').id)
+    expect(node(d, fraVpn).data).toMatchObject({ tag: 'Cisco Catalyst 8000V', tagLevel: 'high' })
+    const link = d.edges.find((e) => e.kind === 'manual')!
+    expect([link.source, link.target, link.label]).toEqual([`peer:${txl}`, fraVpn, 'IPsec in the VMs'])
+  })
+
+  it('lays the new elements out without overlaps', async () => {
+    const elk = new ELK()
+    for (const d of [contractDiagram(m), datacenterDiagram(m, mgmt), datacenterDiagram(m, named(m, 'lhr-staging').id)]) {
+      const l = await layoutDiagram(d, elk)
+      const roots = l.nodes.filter((n) => !n.parent)
+      for (const a of roots)
+        for (const b of roots) {
+          if (a === b) continue
+          expect(a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height, `${a.id} / ${b.id}`).toBe(
+            false,
+          )
+        }
+    }
   })
 })
 

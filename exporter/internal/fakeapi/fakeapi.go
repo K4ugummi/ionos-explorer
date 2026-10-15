@@ -15,8 +15,11 @@ import (
 	"ionos-explorer/exporter/internal/snapshot"
 )
 
-// Prefixes are the URL paths of each API below the host, as on api.ionos.com.
-var Prefixes = map[string]string{endpoints.CloudAPI: "/cloudapi/v6", endpoints.PostgresAPI: "/databases/postgresql"}
+// Prefix is where the server answers for an API: see endpoints.API.Prefix.
+func Prefix(api string) string {
+	a, _ := endpoints.FindAPI(api)
+	return a.Prefix()
+}
 
 // Server answers with the snapshot's raw files, paginated, and with error
 // bodies for what the snapshot recorded as forbidden.
@@ -57,7 +60,7 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, c := range f.Snap.Manifest.Coverage {
-		if r.URL.Path != Prefixes[c.API]+c.Path {
+		if r.URL.Path != Prefix(c.API)+c.Path {
 			continue
 		}
 		q := r.URL.Query()

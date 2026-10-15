@@ -6,17 +6,20 @@ import type { GraphNode, Model, NodeKind } from '../model/types'
  *
  *   fra-core            free text: name, ID, IPs, MACs, labels, descriptions, …
  *   "two words"         quoted phrase
- *   kind:server         resource kind (aliases: vm, dc, lan, cc, k8s, pg, …)
+ *   kind:server         resource kind (aliases: vm, dc, lan, cc, k8s, pg, vpn, …)
+ *   is:appliance        servers that look like network appliances
+ *   is:corrected        NICs (and their servers) with an IP correction you entered
+ *   dhcp:off            NICs whose IP IONOS does not assign (the VM may use another), and their servers
  *   type:cube           server type (cube, dedicated/enterprise, vcpu, gpu) or other subtype
  *   dc:fra-prod         datacenter name (substring or glob)
  *   loc:de/fra          location (substring or glob)
- *   ip:10.7.*           IP (prefix or glob), mac:02:01:ab
+ *   ip:10.7.*           IP (prefix or glob; also the IONOS IP of corrected NICs), mac:02:01:ab
  *   label:env=prod      label (key, or key=value, glob allowed)
  *   state:shutoff       VM state / resource state
  *   -term, -kind:nic    exclude
  */
 
-export const FILTER_KEYS = ['kind', 'is', 'type', 'dc', 'loc', 'location', 'ip', 'mac', 'label', 'tag', 'state', 'id'] as const
+export const FILTER_KEYS = ['kind', 'is', 'type', 'dc', 'loc', 'location', 'ip', 'mac', 'label', 'tag', 'state', 'id', 'dhcp'] as const
 type FilterKey = (typeof FILTER_KEYS)[number]
 
 export interface Term {
@@ -93,6 +96,8 @@ export function search(model: Model, query: string, limit = Infinity): SearchRes
 }
 
 function matchKind(node: GraphNode, value: string) {
+  if (value === 'appliance') return !!node.appliance
+  if (value === 'corrected') return !!node.ionosIps
   const kind = KIND_ALIASES[value] ?? value
   return node.kind === kind
 }
@@ -113,7 +118,13 @@ function matchTerm(model: Model, node: GraphNode, t: Term): number {
     case 'location':
       return node.location && contains(v, node.location.toLowerCase()) ? 10 : 0
     case 'ip':
-      return bestOf(node.ips, v, 90, 55)
+      return bestOf(node.ionosIps ? [...node.ips, ...node.ionosIps] : node.ips, v, 90, 55)
+    case 'dhcp': {
+      const want = ['on', 'yes', 'true', '1'].includes(v) ? true : ['off', 'no', 'false', '0', 'static'].includes(v) ? false : undefined
+      if (want === undefined) return 0
+      const nics = node.kind === 'nic' ? [node] : node.kind === 'server' ? nicsOf(model, node) : []
+      return nics.some((n) => n.dhcp === want) ? 10 : 0
+    }
     case 'mac':
       return bestOf(node.macs, v, 90, 55)
     case 'state':
@@ -123,15 +134,17 @@ function matchTerm(model: Model, node: GraphNode, t: Term): number {
     case 'label':
     case 'tag': {
       const [k, val] = v.split('=', 2)
-      return Object.entries(node.labels).some(
-        ([lk, lv]) => glob(k, lk.toLowerCase()) && (val === undefined || glob(val, lv.toLowerCase())),
-      )
+      return Object.entries(node.labels).some(([lk, lv]) => glob(k, lk.toLowerCase()) && (val === undefined || glob(val, lv.toLowerCase())))
         ? 10
         : 0
     }
     default:
       return freeText(node, v)
   }
+}
+
+function nicsOf(model: Model, server: GraphNode) {
+  return (model.children.get(server.id) ?? []).map((id) => model.nodes.get(id)!).filter((n) => n.kind === 'nic')
 }
 
 function freeText(node: GraphNode, v: string): number {

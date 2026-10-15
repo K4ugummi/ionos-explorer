@@ -6,7 +6,7 @@ import { KindBadge } from './common'
 import { nodeContext } from './context'
 
 const MAX_ROWS = 300
-const EXAMPLES = ['type:cube', 'kind:lan app', 'ip:10.*', 'label:env=prod', 'state:shutoff', 'kind:pcc']
+const EXAMPLES = ['type:cube', 'kind:lan app', 'ip:10.*', 'label:env=prod', 'state:shutoff', 'kind:pcc', 'kind:nic dhcp:off']
 
 export function SearchPanel({
   model,
@@ -96,7 +96,7 @@ export function SearchPanel({
                 </code>
               </span>
             ))}
-            . Filters: kind, type, dc, loc, ip, mac, label, state, id; prefix with - to exclude.
+            . Filters: kind, is, type, dc, loc, ip, mac, label, state, id, dhcp; prefix with - to exclude.
           </div>
         ) : (
           chips.length > 0 && (

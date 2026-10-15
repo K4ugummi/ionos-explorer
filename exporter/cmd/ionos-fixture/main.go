@@ -31,6 +31,7 @@ func run() error {
 	var (
 		out            = flag.String("o", "demo-contract.ionx", "output file")
 		seed           = flag.Int64("seed", 1, "random seed (same seed = identical output)")
+		annotations    = flag.String("annotations", "", "also write the demo's manual links (explorer annotations) to this file")
 		recipientsFile = flag.String("recipients-file", "", "encrypt to the age recipients listed in this file")
 		passphraseFile = flag.String("passphrase-file", "", "encrypt with the passphrase read from this file")
 		recipients     multiFlag
@@ -56,5 +57,15 @@ func run() error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s (%d bytes)\n", *out, buf.Len())
+	if *annotations != "" {
+		b, err := fixture.Annotations(fixture.Options{Seed: *seed, Version: version})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*annotations, append(b, '\n'), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", *annotations)
+	}
 	return nil
 }
