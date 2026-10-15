@@ -13,7 +13,7 @@ Work through the packages in order; tick them off here when done.
 - [x] [03 Large groups](03-large-groups.md): collapse server groups beyond 8
 - [x] [04 Detail by zoom](04-detail-by-zoom.md): names only when zoomed out
 - [x] [05 Layer switches](05-layers.md): show/hide kinds of things
-- [ ] [06 Lines between locations](06-contract-routing.md): no curves across cards
+- [x] [06 Lines between locations](06-contract-routing.md): no curves across cards
 - [ ] [07 Focus and path view](07-focus-and-path.md): what is connected, and how A reaches B
 - [ ] [08 Own positions](08-own-positions.md): drag boxes, keep them
 - [ ] [09 Export](09-export.md): SVG, PNG, draw.io
@@ -41,7 +41,9 @@ or build a model in the test, like `diagram/scale.test.ts` does.
   `SIZE` holds box sizes; `base()` the shared node data.
 - `explorer/src/diagram/layout.ts`: runs ELK. Every group is laid out on its
   own (SEPARATE_CHILDREN), so only edges between siblings get routed;
-  edges across groups have no points and are drawn as curves.
+  edges across groups have no points and are drawn as curves, except with
+  `Diagram.linkedLayout` (the contract view): there the top-level boxes such
+  edges join are laid out together (INCLUDE_CHILDREN) and the edges routed.
 - `explorer/src/diagram/elk.ts`: ELK in a web worker (`elk-worker.min.js`, 1.6 MB).
 - `explorer/src/diagram/flow.ts`: layout → React Flow nodes/edges, with
   selection/search highlighting (`related`, `dim`, `hl`).

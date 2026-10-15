@@ -121,6 +121,16 @@ Modules:
      line; with any other number as a hub node (a Cross Connect is one
      shared L2 segment, not point-to-point links). Cross Connects without
      visible peers get their own box. Double-click or "Open diagram" drills in.
+     ELK lays out each location on its own, so lines between locations
+     (VPN tunnels, manual links, lines to a Cross Connect hub whose peers
+     sit in several locations, lines to the "Outside the contract" group)
+     would have no route. The contract diagram therefore sets
+     `linkedLayout`: `layoutDiagram` puts the top-level boxes such lines
+     join (`linkedBoxes`) into an invisible box that ELK lays out as one
+     layered graph (`INCLUDE_CHILDREN`), so those lines are routed around
+     the cards as well; lines between groups are given to ELK from the
+     earlier group to the later one (and turned back afterwards), so they
+     do not loop round. Locations no line joins keep their own layout.
   2. **Datacenter**: internet on top, LANs as bars, resources between them,
      tiered by distance from the internet (the LAN a resource reaches first
      is drawn above it, the others below). Servers sharing a name stem and
@@ -159,8 +169,8 @@ Modules:
 
   On-demand lines (load balancer targets, router LANs) are not given to
   ELK, so they do not shape the layout and selecting does not lay a view
-  out again; like lines across group borders they are drawn as curves, from
-  the top of a box when the other end lies above it.
+  out again; like lines across group borders in a datacenter view they are
+  drawn as curves, from the top of a box when the other end lies above it.
 
   Every model node has an *anchor* (the box or line that shows it: a NIC or
   volume → its server, everything in a datacenter → its card on the contract
@@ -179,7 +189,8 @@ Modules:
   routes), the 30 most recently used kept. A model rebuilt for annotations
   or a comparison reuses them: new titles, change markers and links ELK
   does not route are put on the cached positions (`withData`). Only a new
-  box or a new link between siblings lays a view out again. Each view is
+  box or a new link between siblings (on the contract view: any new line)
+  lays a view out again. Each view is
   fitted when it opens and again when the canvas changes size, unless the
   user has panned or zoomed since. The legend sits in the bar while it fits
   on one line, otherwise behind a "Legend" button.
@@ -216,7 +227,11 @@ Modules:
   and "Only changes" (with a comparison loaded), dim everything else in
   `toFlow` like a search does, without a new layout. The choice is kept per
   browser in `localStorage` (`ionos-explorer:layers`); a changed layer
-  reframes a view the canvas had framed. The legend lists only the line
+  reframes a view the canvas had framed. A selection that a hidden layer
+  keeps off the canvas (picked in search) gets a note at the top of the
+  canvas, "fra-core-nlb is hidden by Layers: Load balancers", with a
+  "Show" button that turns that layer on again (`hiddenBy` builds the view
+  with each hidden layer shown in turn). The legend lists only the line
   kinds the current diagram draws. React Flow, the ELK
   client and the canvas are a chunk of their own, fetched when the user
   starts opening a snapshot (first click, key or drag on the open screen);

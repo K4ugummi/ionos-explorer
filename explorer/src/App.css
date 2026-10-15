@@ -720,6 +720,38 @@ button.pill {
   pointer-events: none;
 }
 
+/* A selection that a hidden layer keeps off the canvas; right set inline (the drawer). */
+.dg-hint-row {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.dg-hint {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dg-hint strong {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
 .dg-bar {
   /* Above the canvas and the drawer, so the legend popover can hang over them.
      It ends where a side drawer starts (margin set inline), so it covers neither. */

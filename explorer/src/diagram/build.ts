@@ -33,6 +33,13 @@ const LAYERED = {
   'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
 }
 
+/**
+ * Locations joined by lines (tunnels, manual links, Cross Connects across
+ * locations) are laid out as one graph so ELK routes those lines around the
+ * cards. ELK cannot keep the model order or pack components in that mode.
+ */
+const LINKED = { ...LAYERED, 'elk.layered.considerModelOrder.strategy': 'NONE', 'elk.separateConnectedComponents': 'false' }
+
 const GROUP_PADDING = '[top=40,left=16,bottom=16,right=16]'
 
 /** Children of a server group: packed into a grid. */
@@ -154,8 +161,10 @@ const DC_PILLS: [NodeKind, string, string?][] = [
 /**
  * All datacenters, grouped by location, linked by their Cross Connects. A
  * Cross Connect between exactly two datacenters is a line; any other number
- * of peers gets a hub node so the picture stays readable. Of the layers only
- * `links` applies here: tunnels, manual links and the endpoints outside.
+ * of peers gets a hub node so the picture stays readable. Locations that
+ * lines join are laid out together (`linkedLayout`), so those lines are
+ * routed around the cards too. Of the layers only `links` applies here:
+ * tunnels, manual links and the endpoints outside.
  */
 export function contractDiagram(model: Model, options: Pick<DiagramOptions, 'hidden'> = {}): Diagram {
   const withLinks = !options.hidden?.has('links')
@@ -305,6 +314,7 @@ export function contractDiagram(model: Model, options: Pick<DiagramOptions, 'hid
       'elk.aspectRatio': '1.8',
       'elk.padding': '[top=20,left=20,bottom=20,right=20]',
     },
+    linkedLayout: LINKED,
   }
 }
 

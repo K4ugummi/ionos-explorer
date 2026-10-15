@@ -6,7 +6,7 @@ import type { Model, NodeKind } from '../model/types'
 import { fixtureModel, previousFixtureModel } from '../test/fixture'
 import { contractDiagram, datacenterDiagram } from './build'
 import { toFlow } from './flow'
-import { emphasized, LAYERS, NO_LAYERS, parseLayers, serializeLayers, type Layer } from './layers'
+import { emphasized, hiddenBy, LAYERS, NO_LAYERS, parseLayers, serializeLayers, type Layer } from './layers'
 import { layoutDiagram, layoutSignature } from './layout'
 import type { Diagram, DiagramNode } from './types'
 
@@ -110,6 +110,34 @@ describe('layer switches', async () => {
       const boxes = new Set(d.nodes.map((n) => n.id))
       expect(d.edges.filter((e) => !boxes.has(e.source) || !boxes.has(e.target))).toEqual([])
     }
+  })
+
+  it('names the layers that hide a selection', () => {
+    const core = named(m, 'fra-prod-core').id
+    const mgmt = named(m, 'fra-mgmt').id
+    const inDc = (dc: string, hidden: Layer[]) => (id: string) => {
+      const build = (h: ReadonlySet<Layer>) => datacenterDiagram(m, dc, { hidden: h })
+      return hiddenBy(named(m, id).id, new Set(hidden), build(new Set(hidden)), build)
+    }
+    const inContract = (hidden: Layer[]) => (id: string) => {
+      const build = (h: ReadonlySet<Layer>) => contractDiagram(m, { hidden: h })
+      return hiddenBy(named(m, id).id, new Set(hidden), build(new Set(hidden)), build)
+    }
+    expect(inDc(core, [])('fra-core-nlb')).toEqual([])
+    expect(inDc(core, ['lb'])('fra-core-nlb')).toEqual(['lb'])
+    expect(inDc(core, ['managed', 'lb', 'leftovers'])('fra-core-nlb')).toEqual(['lb'])
+    // Shown, or not in this view at all: nothing to say.
+    expect(inDc(core, ['lb'])('fra-core-fw-01')).toEqual([])
+    expect(inDc(core, ['lb'])('txl-core-nlb')).toEqual([])
+    // Without its line a tunnel is found on its gateway; without the gateway it is gone.
+    expect(inDc(mgmt, ['links'])('hq-office')).toEqual([])
+    expect(inDc(mgmt, ['gateways'])('hq-office')).toEqual(['gateways'])
+    expect(inDc(mgmt, ['links', 'gateways'])('hq-office')).toEqual(['gateways'])
+    // The contract view only knows the links layer, and finds what is in a datacenter on its card.
+    expect(inContract(['links'])('Head office')).toEqual(['links'])
+    expect(inContract(['links', 'lb'])('192.0.2.77')).toEqual(['links'])
+    expect(inContract(['links'])('txl-core')).toEqual([])
+    expect(inContract(['lb'])('fra-core-nlb')).toEqual([])
   })
 })
 

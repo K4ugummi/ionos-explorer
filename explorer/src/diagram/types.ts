@@ -88,6 +88,12 @@ export interface Diagram {
   /** Model nodes in a collapsed group's "more" box (members, their NICs and volumes) → the member. */
   hidden?: Map<string, string>
   rootLayout: Record<string, string>
+  /**
+   * ELK options for top-level boxes that lines across group borders join.
+   * Such boxes (with their groups' contents) are laid out together, so ELK
+   * routes those lines too. Without it, lines across groups are drawn freely.
+   */
+  linkedLayout?: Record<string, string>
 }
 
 export interface Point {

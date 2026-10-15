@@ -1,4 +1,5 @@
 import type { Model, NodeKind } from '../model/types'
+import type { Diagram } from './types'
 
 /**
  * Kinds of things the user can take out of the diagram. A hidden layer is
@@ -83,4 +84,30 @@ export function emphasized(model: Model, emphasis: Emphasis | undefined, compari
   if (emphasis === 'appliances') return new Set([...model.nodes.values()].filter((n) => n.appliance).map((n) => n.id))
   if (emphasis === 'changes' && comparing) return new Set([...model.nodes.values()].filter((n) => n.change).map((n) => n.id))
   return null
+}
+
+/** Whether a diagram has a box or line for a model node. */
+const shows = (d: Diagram, id: string) => {
+  const a = d.anchors.get(id)
+  return !!a && (d.nodes.some((n) => n.id === a) || d.edges.some((e) => e.id === a))
+}
+
+/**
+ * The hidden layers that keep a model node out of a view: the first one
+ * that alone brings it back, else all of them if only showing everything
+ * does (a tunnel needs both its gateway and the tunnel lines). Empty when
+ * the node is shown, or would not be in this view anyway. `build` makes the
+ * view's diagram with other layers hidden; `diagram` is the current one.
+ */
+export function hiddenBy(
+  id: string,
+  hidden: ReadonlySet<Layer>,
+  diagram: Diagram,
+  build: (hidden: ReadonlySet<Layer>) => Diagram,
+): Layer[] {
+  if (!hidden.size || shows(diagram, id)) return []
+  const on = LAYERS.map((l) => l.id).filter((l) => hidden.has(l))
+  const one = on.find((l) => shows(build(new Set(on.filter((x) => x !== l))), id))
+  if (one) return [one]
+  return on.length > 1 && shows(build(new Set()), id) ? on : []
 }

@@ -5,8 +5,10 @@ import { contractDiagram, datacenterDiagram } from './build'
 import { layoutDiagram } from './layout'
 
 // A synthetic contract far larger than the demo: 240 datacenters in eight
-// locations, 60 Cross Connects, and one datacenter with 400 servers.
-function largeModel(): Model {
+// locations, 60 Cross Connects, and one datacenter with 400 servers. With
+// `links`, that many manual links and two Cross Connects join datacenters
+// in different locations.
+function largeModel(links = 0): Model {
   const nodes = new Map<string, GraphNode>()
   const edges: GraphEdge[] = []
   const add = (p: Partial<GraphNode> & Pick<GraphNode, 'id' | 'kind' | 'name'>) =>
@@ -28,6 +30,13 @@ function largeModel(): Model {
     add({ id: `pcc${p}`, kind: 'pcc', name: `pcc-${p}`, parentId: 'root' })
     // Peers in the same location: datacenters i, i+8, i+16, …
     for (let j = 0; j < 2 + (p % 4); j++) edges.push({ kind: 'cross-connect', from: `dc${(p * 3 + j * 8) % 240}:lan:2`, to: `pcc${p}` })
+  }
+  for (let k = 0; k < links; k++) {
+    edges.push({ kind: 'manual', from: `dc${(k * 7) % 240}-s0`, to: `dc${(k * 13 + 1) % 240}-s1`, label: `link ${k}`, ref: `ml${k}` })
+  }
+  for (let p = 0; links && p < 2; p++) {
+    add({ id: `xpcc${p}`, kind: 'pcc', name: `across-${p}`, parentId: 'root' })
+    for (let j = 0; j < 3; j++) edges.push({ kind: 'cross-connect', from: `dc${p * 40 + j * 9}:lan:2`, to: `xpcc${p}` })
   }
   const children = new Map<string, string[]>()
   const edgesByNode = new Map<string, GraphEdge[]>()
@@ -61,4 +70,17 @@ it('lays out large contracts', async () => {
   const full = open.nodes.filter((n) => n.type === 'group')
   for (const g of full) expect(open.nodes.filter((n) => n.parent === g.id)).toHaveLength(200)
   for (const g of full) expect(g.width / g.height).toBeLessThan(4)
+}, 60000)
+
+it('routes lines between locations in large contracts', async () => {
+  const d = contractDiagram(largeModel(40))
+  const t = performance.now()
+  const l = await layoutDiagram(d, new ELK())
+  const ms = performance.now() - t
+  const parent = new Map(d.nodes.map((n) => [n.id, n.parent]))
+  const across = l.edges.filter((e) => parent.get(e.source) !== parent.get(e.target))
+  // 40 links (pairs of locations, some repeated) and 2 × 3 lines to the hubs between locations.
+  expect(across.length).toBeGreaterThanOrEqual(40)
+  for (const e of across) expect(e.points?.length, e.id).toBeGreaterThanOrEqual(2)
+  expect(ms).toBeLessThan(20000)
 }, 60000)

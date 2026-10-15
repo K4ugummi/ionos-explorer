@@ -18,7 +18,7 @@ import { contractDiagram, datacenterDiagram } from './build'
 import { elk } from './elk'
 import { useDismiss } from './dismiss'
 import { legendFits, refitOnResize, type Box, type Framing } from './framing'
-import { emphasized, loadLayers, saveLayers, type Layers } from './layers'
+import { emphasized, hiddenBy, LAYERS, loadLayers, saveLayers, type Layers } from './layers'
 import { LayersMenu } from './LayersMenu'
 import { lodFor, type Lod } from './lod'
 import { absolutePositions, layoutCache, layoutDiagram, layoutSignature, withData } from './layout'
@@ -119,6 +119,16 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
   const state = useLayout(diagram)
   const layout = state.layout
   const anchor = selectedId ? diagram.anchors.get(selectedId) : undefined
+  // A selection a hidden layer keeps off the canvas (picked in search): say so, with a way back.
+  const hiding = useMemo(
+    () =>
+      selectedId
+        ? hiddenBy(selectedId, layers.hidden, diagram, (hidden) =>
+            dcId ? datacenterDiagram(model, dcId, { expanded, selected: focus, hidden }) : contractDiagram(model, { hidden }),
+          )
+        : [],
+    [selectedId, layers.hidden, diagram, model, dcId, expanded, focus],
+  )
   const flow = useMemo(
     () => (layout ? toFlow(layout, diagram, anchor, matches, bright) : undefined),
     [layout, diagram, anchor, matches, bright],
@@ -346,6 +356,24 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, rightIns
             </div>
           )}
           {flow && diagram.nodes.length === 0 && <div className="dg-status">Nothing to draw here.</div>}
+          {flow && hiding.length > 0 && (
+            <div className="dg-hint-row" style={{ right: rightInset + 12 }}>
+              <div className="dg-hint" role="status">
+                <span>
+                  <strong>{model.nodes.get(selectedId!)?.name}</strong> is hidden by Layers:{' '}
+                  {LAYERS.filter((l) => hiding.includes(l.id))
+                    .map((l) => l.label)
+                    .join(', ')}
+                </span>
+                <button
+                  className="btn small"
+                  onClick={() => changeLayers({ ...layers, hidden: new Set([...layers.hidden].filter((l) => !hiding.includes(l))) })}
+                >
+                  Show
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </DiagramActions.Provider>

@@ -63,7 +63,10 @@ names; the selection, its neighbours and search hits keep their details.
 "Layers" in the diagram bar hides load balancers, gateways, managed
 services, tunnels and links, leftover groups or Cross Connect peers (the
 layout closes the gap), or dims all but appliances or, when comparing, all
-but changes; the choice is remembered in this browser.
+but changes; the choice is remembered in this browser. A resource picked
+in search that a hidden layer leaves out gets a note with a "Show" button.
+On the contract view, tunnels and links between locations are routed
+around the datacenter cards.
 Links the API cannot see, such as an IPsec tunnel between two Cisco VMs, can
 be added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
 keeps a record that may be outdated (`dhcp:off` finds them), and a

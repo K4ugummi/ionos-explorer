@@ -6,7 +6,7 @@ import { contractDiagram, datacenterDiagram, diagramFor, GROUP_LIMIT, GROUP_PREV
 import { toFlow } from './flow'
 import { midpoint, roundedPath } from './geometry'
 import { absolutePositions, layoutDiagram, layoutSignature } from './layout'
-import type { Diagram } from './types'
+import type { Diagram, Layout } from './types'
 import { addLink, addSite, applyAnnotations, EMPTY, siteNodeId } from '../annotations/annotations'
 
 const named = (m: Model, name: string) => [...m.nodes.values()].find((n) => n.name === name)!
@@ -161,8 +161,9 @@ describe('layout', async () => {
     for (const l of layouts) {
       const parent = new Map(l.nodes.map((n) => [n.id, n.parent]))
       for (const e of l.edges) {
-        const siblings = parent.get(e.source) === parent.get(e.target)
-        if (siblings && !e.onDemand) expect(e.points?.length, `${l.key} ${e.id}`).toBeGreaterThanOrEqual(2)
+        // The contract view routes lines between locations too (linkedLayout).
+        const routed = (l.key === 'contract' || parent.get(e.source) === parent.get(e.target)) && !e.onDemand
+        if (routed) expect(e.points?.length, `${l.key} ${e.id}`).toBeGreaterThanOrEqual(2)
         else expect(e.points).toBeUndefined()
       }
     }
@@ -518,6 +519,49 @@ describe('VPN tunnels, appliances and manual links', async () => {
     expect(outside).toEqual(['192.0.2.77', 'Head office'])
     expect(node(d, named(m, 'fra-prod-core').id).data.pills).toContain('4 appliances')
     expect(d.anchors.get(named(m, 'txl-core').id)).toBe(d.edges.find((e) => e.label === 'txl-core')!.id)
+  })
+
+  it('routes the lines between locations around the cards on the contract view', async () => {
+    const elk = new ELK()
+    const d = contractDiagram(m)
+    const l = await layoutDiagram(d, elk)
+    const abs = absolutePositions(l)
+    const parent = new Map(d.nodes.map((n) => [n.id, n.parent]))
+    const across = l.edges.filter((e) => parent.get(e.source) !== parent.get(e.target))
+    expect(across.map((e) => e.kind).sort()).toEqual(['manual', 'tunnel', 'tunnel', 'tunnel'])
+    const inside = (p: { x: number; y: number }, id: string, pad: number) => {
+      const b = abs.get(id)!
+      return p.x >= b.x - pad && p.x <= b.x + b.width + pad && p.y >= b.y - pad && p.y <= b.y + b.height + pad
+    }
+    for (const e of l.edges) {
+      const pts = e.points!
+      expect(pts.length, e.id).toBeGreaterThanOrEqual(2)
+      expect(inside(pts[0], e.source, 1) && inside(pts.at(-1)!, e.target, 1), e.id).toBe(true)
+      // Orthogonal segments: a segment's bounding box is the segment.
+      for (const n of l.nodes) {
+        if (n.type === 'group' || n.id === e.source || n.id === e.target) continue
+        const b = abs.get(n.id)!
+        const hit = pts.slice(1).some((q, i) => {
+          const p = pts[i]
+          return (
+            Math.max(p.x, q.x) > b.x &&
+            Math.min(p.x, q.x) < b.x + b.width &&
+            Math.max(p.y, q.y) > b.y &&
+            Math.min(p.y, q.y) < b.y + b.height
+          )
+        })
+        expect(hit, `${e.id} crosses ${n.data.title}`).toBe(false)
+      }
+    }
+
+    // Locations no line joins keep the layout they had on their own; without
+    // the lines (the "links" layer hidden) the whole view does.
+    const own = await layoutDiagram({ ...d, linkedLayout: undefined }, elk)
+    const at = (l: Layout, parentId: string) => l.nodes.filter((n) => n.parent === parentId).map((n) => [n.id, n.x, n.y])
+    for (const g of ['loc:es/vit', 'loc:de/fra/2', 'group:unused-pcc']) expect(at(l, g)).toEqual(at(own, g))
+    const cut = contractDiagram(m, { hidden: new Set(['links']) })
+    const plain = await layoutDiagram({ ...cut, linkedLayout: undefined }, elk)
+    expect((await layoutDiagram(cut, elk)).nodes).toEqual(plain.nodes)
   })
 
   it('shows a VPN gateway between the internet and its LAN, with its tunnels', () => {

@@ -115,3 +115,16 @@ Done 2026-10-15. Notes and deviations:
   has no box, so nothing lights up (the details drawer still opens); a
   hint like "hidden by Layers" could be added. Layer choice is per browser,
   not per contract or in the URL.
+- **Hint added (with package 06).** A selection a hidden layer keeps off
+  the canvas now gets a note at the top of the canvas: "fra-core-nlb is
+  hidden by Layers: Load balancers" and a "Show" button that turns that
+  layer on again (the layout runs, the box is selected and brought into
+  view). `hiddenBy` in `layers.ts` (pure, tested in `layers.test.ts`)
+  builds the view with each hidden layer shown in turn and names the first
+  one that brings the selection back, or all hidden ones if only showing
+  everything does; nothing when the selection is shown anyway (a tunnel
+  without its line is found on its gateway, anything in a datacenter on its
+  card in the contract view) or belongs to another view. Checked in the
+  browser (contract: links off → "Head office"; fra-prod-core: load
+  balancers off → fra-core-nlb; button by mouse and by keyboard), light,
+  dark and 390 px, no overflow, no console messages.

@@ -4,8 +4,11 @@ import type { Diagram, Layout, PlacedEdge, PlacedNode, Point } from './types'
 /**
  * Runs ELK over a diagram. Every group is laid out on its own with its own
  * algorithm (ELK's default SEPARATE_CHILDREN), so only edges between
- * siblings are routed by ELK; edges that cross group borders are left
- * without points and drawn as plain curves by the renderer.
+ * siblings are routed. With `linkedLayout`, the top-level boxes that edges
+ * across group borders join go into an invisible box that ELK lays out as
+ * one graph (INCLUDE_CHILDREN), so those edges are routed too; everything
+ * else keeps its own layout. Without it, such edges are left without points
+ * and drawn as plain curves by the renderer.
  */
 export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout> {
   const root: ElkNode = {
@@ -14,47 +17,81 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
     children: [],
     edges: [],
   }
+  const { top, cluster } = linkedBoxes(diagram)
   const elkNodes = new Map<string, ElkNode>([[root.id, root]])
+  for (const c of new Set(cluster.values())) {
+    const layoutOptions = {
+      ...diagram.linkedLayout,
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'elk.padding': '[top=0,left=0,bottom=0,right=0]',
+    }
+    elkNodes.set(c, { id: c, layoutOptions, children: [], edges: [] })
+  }
   for (const n of diagram.nodes) {
+    // A group in a linked box is part of its graph: same algorithm, own padding.
+    const padding = n.layout?.['elk.padding']
+    const options = cluster.has(top(n.id)) ? { ...diagram.linkedLayout, ...(padding ? { 'elk.padding': padding } : {}) } : (n.layout ?? {})
     // ELK's JSON importer chokes on keys that are present but undefined.
     elkNodes.set(
       n.id,
-      n.type === 'group'
-        ? { id: n.id, layoutOptions: n.layout ?? {}, children: [], edges: [] }
-        : { id: n.id, width: n.width!, height: n.height! },
+      n.type === 'group' ? { id: n.id, layoutOptions: options, children: [], edges: [] } : { id: n.id, width: n.width!, height: n.height! },
     )
   }
   for (const n of diagram.nodes) {
-    const parent = elkNodes.get(n.parent ?? root.id)
+    // A linked box takes the place of its first member, keeping the model order.
+    const linked = !n.parent && cluster.get(n.id)
+    if (linked && !elkNodes.get(linked)!.children!.length) root.children!.push(elkNodes.get(linked)!)
+    const parent = elkNodes.get(n.parent ?? (linked || root.id))
     if (!parent?.children) throw new Error(`diagram node ${n.id}: parent ${n.parent} is not a group`)
     parent.children.push(elkNodes.get(n.id)!)
   }
 
   const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent ?? root.id]))
+  const order = new Map(diagram.nodes.map((n, i) => [n.id, i]))
   const routed = new Set<string>()
+  const flipped = new Set<string>()
   for (const e of routedEdges(diagram)) {
-    elkNodes.get(parentOf.get(e.source)!)!.edges!.push({ id: e.id, sources: [e.source], targets: [e.target] })
+    const p = parentOf.get(e.source)
+    if (p === parentOf.get(e.target)) {
+      elkNodes.get(p!)!.edges!.push({ id: e.id, sources: [e.source], targets: [e.target] })
+    } else {
+      // Lines between groups have no direction worth keeping; pointing them all
+      // from the earlier group to the later one lets ELK put the groups in that
+      // order instead of looping lines that point back round both groups.
+      const flip = order.get(top(e.source))! > order.get(top(e.target))!
+      if (flip) flipped.add(e.id)
+      const [a, b] = flip ? [e.target, e.source] : [e.source, e.target]
+      elkNodes.get(cluster.get(top(e.source))!)!.edges!.push({ id: e.id, sources: [a], targets: [b] })
+    }
     routed.add(e.id)
   }
 
   const result = await elk.layout(root)
 
+  const byId = new Map(diagram.nodes.map((d) => [d.id, d]))
   const nodes: PlacedNode[] = []
   const edges = new Map<string, Point[]>()
-  const visit = (n: ElkNode) => {
+  // Boxes in a linked box are placed relative to it; it is not drawn, so they move to the top level.
+  const visit = (n: ElkNode, dx = 0, dy = 0) => {
     for (const c of n.children ?? []) {
-      const d = diagram.nodes.find((x) => x.id === c.id)
-      if (d) nodes.push({ ...d, x: c.x ?? 0, y: c.y ?? 0, width: c.width ?? d.width ?? 0, height: c.height ?? d.height ?? 0 })
+      const d = byId.get(c.id)
+      const [x, y] = [(c.x ?? 0) + dx, (c.y ?? 0) + dy]
+      if (!d) {
+        visit(c, x, y)
+        continue
+      }
+      nodes.push({ ...d, x, y, width: c.width ?? d.width ?? 0, height: c.height ?? d.height ?? 0 })
       visit(c)
     }
     for (const e of (n.edges ?? []) as ElkExtendedEdge[]) {
       const s = e.sections?.[0]
-      if (s) edges.set(e.id, [s.startPoint, ...(s.bendPoints ?? []), s.endPoint])
+      if (!s) continue
+      const points = [s.startPoint, ...(s.bendPoints ?? []), s.endPoint]
+      edges.set(e.id, flipped.has(e.id) ? points.reverse() : points)
     }
   }
   visit(result)
   // Parents first, as React Flow requires.
-  const order = new Map(diagram.nodes.map((n, i) => [n.id, i]))
   const depth = (id: string): number => {
     const p = diagram.nodes[order.get(id)!]?.parent
     return p ? 1 + depth(p) : 0
@@ -68,6 +105,34 @@ export async function layoutDiagram(diagram: Diagram, elk: ELK): Promise<Layout>
   }
 }
 
+/**
+ * With `linkedLayout`: the top-level boxes that routed edges across group
+ * borders join, each mapped to the id of its linked box (boxes joined by
+ * such edges, directly or through others, share one). `top` gives the
+ * top-level box a node sits in.
+ */
+export function linkedBoxes(diagram: Diagram) {
+  const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent]))
+  const top = (id: string): string => {
+    const p = parentOf.get(id)
+    return p ? top(p) : id
+  }
+  const cluster = new Map<string, string>()
+  if (!diagram.linkedLayout) return { top, cluster }
+  const joined = new Map<string, string>()
+  const find = (id: string): string => {
+    const p = joined.get(id) ?? id
+    return p === id ? id : find(p)
+  }
+  const across = routedEdges(diagram).filter((e) => parentOf.get(e.source) !== parentOf.get(e.target))
+  for (const e of across) {
+    const [a, b] = [find(top(e.source)), find(top(e.target))]
+    if (a !== b) joined.set(b, a)
+  }
+  for (const e of across) for (const id of [top(e.source), top(e.target)]) cluster.set(id, `__linked:${find(id)}`)
+  return { top, cluster }
+}
+
 /** Absolute position of every node (layout positions are relative to the parent). */
 export function absolutePositions(layout: Layout): Map<string, Point & { width: number; height: number }> {
   const out = new Map<string, Point & { width: number; height: number }>()
@@ -78,22 +143,33 @@ export function absolutePositions(layout: Layout): Map<string, Point & { width: 
   return out
 }
 
-/** Edges ELK routes: both ends in the same group (or both top level), and always drawn. */
+/**
+ * Edges ELK routes: always drawn, and both ends in the same group (or both
+ * top level), or anywhere with `linkedLayout`.
+ */
 function routedEdges(diagram: Diagram) {
   const parentOf = new Map(diagram.nodes.map((n) => [n.id, n.parent ?? '']))
-  return diagram.edges.filter((e) => !e.onDemand && parentOf.has(e.source) && parentOf.get(e.source) === parentOf.get(e.target))
+  return diagram.edges.filter(
+    (e) =>
+      !e.onDemand &&
+      parentOf.has(e.source) &&
+      parentOf.has(e.target) &&
+      (!!diagram.linkedLayout || parentOf.get(e.source) === parentOf.get(e.target)),
+  )
 }
 
 /**
  * Everything the layout depends on, as a string: node ids, types, parents,
  * sizes and ELK options in diagram order (ELK keeps the model order), plus
- * the edges ELK routes. Titles, pills, tags and change markers only affect
- * rendering, so diagrams that differ in those share a layout.
+ * the edges ELK routes (they also decide the linked boxes). Titles, pills,
+ * tags and change markers only affect rendering, so diagrams that differ in
+ * those share a layout.
  */
 export function layoutSignature(diagram: Diagram): string {
   return JSON.stringify([
     diagram.key,
     diagram.rootLayout,
+    diagram.linkedLayout ?? null,
     diagram.nodes.map((n) => [n.id, n.type, n.parent ?? '', n.width ?? -1, n.height ?? -1, n.layout ?? null]),
     routedEdges(diagram).map((e) => [e.id, e.source, e.target]),
   ])

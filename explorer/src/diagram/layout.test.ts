@@ -4,7 +4,7 @@ import { applyAnnotations, EMPTY } from '../annotations/annotations'
 import { compareModels, markChanges } from '../diff/diff'
 import { fixtureModel, previousFixtureModel } from '../test/fixture'
 import { contractDiagram, datacenterDiagram } from './build'
-import { layoutCache, layoutDiagram, layoutSignature, withData } from './layout'
+import { absolutePositions, layoutCache, layoutDiagram, layoutSignature, linkedBoxes, withData } from './layout'
 import type { Diagram, Layout } from './types'
 
 // Two servers on one LAN in a group, a load balancer target shown on demand,
@@ -65,6 +65,7 @@ describe('layoutSignature', () => {
       edit((d) => d.edges.splice(0, 1)),
       edit((d) => d.nodes.reverse()),
       edit((d) => (d.key = 'dc:y')),
+      edit((d) => (d.linkedLayout = { 'elk.algorithm': 'layered' })),
     ]
     for (const d of changed) expect(layoutSignature(d)).not.toBe(base)
     expect(new Set(changed.map(layoutSignature)).size).toBe(changed.length)
@@ -77,6 +78,58 @@ describe('layoutSignature', () => {
     expect(layoutSignature(contractDiagram(marked))).toBe(layoutSignature(contractDiagram(m)))
     for (const dc of [...m.nodes.values()].filter((n) => n.kind === 'datacenter'))
       expect(layoutSignature(datacenterDiagram(marked, dc.id))).toBe(layoutSignature(datacenterDiagram(m, dc.id)))
+  })
+})
+
+describe('linked boxes', () => {
+  // A second group, and a line from it back to the first: lines across groups.
+  const linked = () =>
+    edit((d) => {
+      d.linkedLayout = { 'elk.algorithm': 'layered', 'elk.direction': 'DOWN', 'elk.edgeRouting': 'ORTHOGONAL' }
+      d.nodes.push(
+        {
+          id: 'h',
+          type: 'group',
+          layout: { 'elk.algorithm': 'rectpacking', 'elk.padding': '[top=40,left=16,bottom=16,right=16]' },
+          data: { title: 'h' },
+        },
+        { id: 'c', type: 'resource', parent: 'h', width: 236, height: 54, data: { title: 'c' } },
+        { id: 'alone', type: 'group', layout: { 'elk.algorithm': 'rectpacking' }, data: { title: 'alone' } },
+        { id: 'd', type: 'resource', parent: 'alone', width: 236, height: 54, data: { title: 'd' } },
+      )
+      d.edges.push({ id: 'c-a', source: 'c', target: 'a', kind: 'tunnel' })
+    })
+
+  it('joins the top-level boxes that lines across groups link', () => {
+    const { top, cluster } = linkedBoxes(linked())
+    expect(top('a')).toBe('g')
+    expect(top('alone')).toBe('alone')
+    // g–out (a-out) and h–g (c-a): one linked box; on-demand lines do not count.
+    expect([...cluster.keys()]).toEqual(['g', 'out', 'h'])
+    expect(new Set(cluster.values()).size).toBe(1)
+    expect(linkedBoxes(sample()).cluster.size).toBe(0)
+  })
+
+  it('routes lines across groups, from their source to their target', async () => {
+    const l = await layoutDiagram(linked(), new ELK())
+    const abs = absolutePositions(l)
+    const on = (p: { x: number; y: number }, id: string) => {
+      const b = abs.get(id)!
+      return p.x >= b.x - 1 && p.x <= b.x + b.width + 1 && p.y >= b.y - 1 && p.y <= b.y + b.height + 1
+    }
+    for (const id of ['a-out', 'c-a', 'a-lan']) {
+      const e = l.edges.find((e) => e.id === id)!
+      expect(e.points!.length, id).toBeGreaterThanOrEqual(2)
+      // c-a points back from the later group to the earlier one, so ELK gets it flipped; the route is turned back.
+      expect(on(e.points![0], e.source) && on(e.points!.at(-1)!, e.target), id).toBe(true)
+    }
+    expect(l.edges.find((e) => e.id === 'a-b')!.points).toBeUndefined()
+    // The invisible linked box is not a node; its boxes stay top level and inside their groups.
+    expect(l.nodes.map((n) => n.id).sort()).toEqual(['a', 'alone', 'b', 'c', 'd', 'g', 'h', 'lan', 'out'])
+    for (const n of l.nodes.filter((n) => n.parent)) {
+      const [c, p] = [abs.get(n.id)!, abs.get(n.parent!)!]
+      expect(c.x >= p.x && c.y >= p.y && c.x + c.width <= p.x + p.width && c.y + c.height <= p.y + p.height, n.id).toBe(true)
+    }
   })
 })
 
