@@ -12,3 +12,6 @@
 /bin/
 # The explorer build embedded into ionos-explorer (make explorer-app)
 /exporter/internal/webui/dist/
+
+# Working plans (local only; they may hold notes about a real contract)
+/.plans/

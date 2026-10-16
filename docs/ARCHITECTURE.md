@@ -668,13 +668,13 @@ tested in `exporter/internal/server/server_test.go` (named in brackets).
 4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
 5. ✅ Appliance detection, VPN Gateway coverage, manual links and sites
 6. ✅ IP corrections, Security Groups, comparing snapshots
-7. ✅ Canvas for real contracts ([plan](plans/canvas/README.md)): router
+7. ✅ Canvas for real contracts: router
    boxes, collapsed groups, detail by zoom, layers, focus and path views,
    own positions, SVG/PNG/draw.io export
-8. ✅ One binary, `ionos-explorer` ([plan](plans/merged-app.md)): serves
+8. ✅ One binary, `ionos-explorer`: serves
    the UI on 127.0.0.1 and fetches itself, token typed into the page,
    data in memory until downloaded
-9. Hosted for a team in a container ([plan](plans/hosted/README.md)):
+9. Hosted for a team in a container:
    hosted mode with sessions, built-in OIDC login, encrypted snapshot
    history on a volume, image, Compose and Kubernetes (tested), Helm,
    Swarm, Podman/systemd (provided), more platforms documented, CI and releases
