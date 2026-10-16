@@ -674,4 +674,8 @@ tested in `exporter/internal/server/server_test.go` (named in brackets).
 8. ✅ One binary, `ionos-explorer` ([plan](plans/merged-app.md)): serves
    the UI on 127.0.0.1 and fetches itself, token typed into the page,
    data in memory until downloaded
-9. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …)
+9. Hosted for a team in a container ([plan](plans/hosted/README.md)):
+   hosted mode with sessions, built-in OIDC login, encrypted snapshot
+   history on a volume, image, Compose and Kubernetes (tested), Helm,
+   Swarm, Podman/systemd (provided), more platforms documented, CI and releases
+10. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …)
