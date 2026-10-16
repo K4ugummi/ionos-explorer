@@ -22,31 +22,48 @@ IONOS contract, from one datacenter to hundreds:
   plausible enterprise setup; additional generated profiles (minimal,
   large-scale stress) guard against overfitting.
 
-## Guiding constraint: the UI never touches the IONOS API
+## Guiding constraint: the browser never touches the IONOS API
+
+Only Go code with a read-only, GET-only HTTP client talks to IONOS. The
+explorer UI in the browser talks to nothing but the server it was loaded
+from. There are two ways to run it:
 
 ```
-┌──────────────────────┐   snapshot file    ┌─────────────────────────────┐
-│  ionos-export (Go)   │ ─────────────────► │  explorer (React/TS)        │
-│  read-only token     │  .ionx             │  no credentials             │
-│  GET requests only   │  .ionx.age (opt.)  │  no outbound network (CSP)  │
-│  small + auditable   │                    │  search, canvas, details    │
-└──────────────────────┘                    └─────────────────────────────┘
+1. One program (ionos-explorer, local)
+
+   browser, 127.0.0.1 only              ionos-explorer (Go)                         IONOS APIs
+   ┌──────────────────────────┐  /api   ┌───────────────────────────────────┐  GET  ┌──────────┐
+   │ explorer UI (embedded)   │ ──────► │ login secret, cookie + session key│ ────► │ Cloud API│
+   │ token typed once → POST  │ ◄────── │ token in memory, one fetch at once│ ◄──── │ product  │
+   │ snapshot bytes → model   │  .ionx  │ same crawl as ionos-export        │       │ APIs     │
+   └──────────────────────────┘         └───────────────────────────────────┘       └──────────┘
+
+2. Two programs (a machine that only fetches, files shared)
+
+   ┌──────────────────────┐   snapshot file    ┌─────────────────────────────┐
+   │  ionos-export (Go)   │ ─────────────────► │  explorer (static build)    │
+   │  read-only token     │  .ionx             │  no credentials, no backend │
+   │  GET requests only   │  .ionx.age (opt.)  │  no outbound network (CSP)  │
+   └──────────────────────┘                    └─────────────────────────────┘
 ```
 
-The two halves only share the **snapshot format**
-([SNAPSHOT_FORMAT.md](SNAPSHOT_FORMAT.md), [schema](../schema/manifest.schema.json)).
+Both write and read the same **snapshot format**
+([SNAPSHOT_FORMAT.md](SNAPSHOT_FORMAT.md), [schema](../schema/manifest.schema.json)):
+`ionos-explorer` runs the crawl of `ionos-export` (`internal/export`) and
+hands the browser exactly the file `ionos-export` would have written, kept
+in memory. The UI opens it like a dropped file.
 
-| Concern | Exporter | Explorer |
+| Concern | ionos-export / ionos-explorer (Go) | Explorer UI (browser) |
 |---|---|---|
-| Credentials | IONOS token (env/file, never argv, never logged, never in output) | none |
-| Network | `api.ionos.com` and product API hosts, GET/HEAD only | none: production CSP sets `connect-src 'self'` |
+| Credentials | IONOS token: env/file (`ionos-export`) or typed into the page and posted once to the local program (`ionos-explorer`); never argv, logs, URLs, output | never holds one beyond the submit |
+| Network | `api.ionos.com` and product API hosts, GET/HEAD only; `ionos-explorer` also listens on loopback | only its own origin: CSP `connect-src 'self'`; served by `ionos-explorer`, that is the local server |
 | Logic | fetch, paginate, record coverage, write raw JSON | parse, normalize, index, lay out, render |
 | Change rate | rarely (new endpoint = new list entry) | often |
 
-The exporter stays deliberately "dumb": it stores API responses unchanged
+The crawl stays deliberately "dumb": it stores API responses unchanged
 (only re-serialized canonically). All interpretation lives in the explorer,
-so mapping bugs are fixed without re-exporting and the exporter's audit
-surface stays small.
+so mapping bugs are fixed without re-exporting and the audit surface of
+the Go code stays small.
 
 ## Components
 
@@ -54,6 +71,11 @@ surface stays small.
 
 - `cmd/ionos-export`: the CLI. `--list` prints every request it can make
   without needing credentials or network.
+- `cmd/ionos-explorer`: the single binary. Serves the explorer UI on
+  127.0.0.1 and runs the crawl when the page asks (see *ionos-explorer*
+  below). Flags: `--listen` (default `127.0.0.1:0`, a free port; loopback
+  only), `--open` (default on), `--base-url` (a local mock),
+  `--forget-after` (default 30m), `--version`.
 - `cmd/ionos-fixture`: generates a synthetic 14-datacenter contract in the
   exact snapshot format, for development and tests.
 - `internal/endpoints`: the explicit list of endpoints the exporter calls.
@@ -64,7 +86,11 @@ surface stays small.
   credentials itself and retries 429 (honouring `Retry-After`), 5xx and
   network errors with exponential backoff.
 - `internal/export`: runs the plan (top-level collections, then one request
-  per datacenter / cluster), up to `--parallel` requests at a time.
+  per datacenter / cluster), up to `--parallel` requests at a time. It
+  reports each finished request (`Progress`) and how many were added to the
+  plan (`Planned`: the top-level ones, then per child endpoint once its
+  parent is known), so a caller can show "done of total"; a cancelled
+  context stops it.
   Pagination is driven by `offset`/`limit`, never by following
   `_links.next`, and pages are merged. Ids from responses become URL path
   segments only if they look like ids. Coverage records every request's
@@ -75,16 +101,25 @@ surface stays small.
 - `internal/fakeapi`: serves a snapshot back as the IONOS API would
   (paginated, with error bodies), so tests run the exporter end to end
   against the demo contract and check that it reproduces it byte for byte.
+- `internal/server`: the local web server of `ionos-explorer` (security
+  checks, the fetch job, the UI files). Everything below is tested with
+  `httptest` against `fakeapi`.
+- `internal/webui`: the UI as an `fs.FS`. With the build tag `embedui` it
+  embeds `internal/webui/dist`, which `make explorer-app` fills with the
+  explorer's production build; without the tag (plain `go build`, `go
+  test`, `go vet`) it is a one-page placeholder that says how to build with
+  the UI. So the Go code builds and tests without Node, and no tracked file
+  is overwritten by a build (`dist/` is git-ignored).
 
 No IONOS SDK: plain `net/http` keeps the dependency tree tiny and preserves
 every field the API returns (SDKs drop fields they don't model).
 
-Runs non-interactively, so the same binary works for manual runs and CI/cron.
+`ionos-export` runs non-interactively, so the same binary works for manual runs and CI/cron.
 Exit codes: `0` complete, `2` written but partial (some endpoints
 forbidden/failed; endpoints excluded with `--skip` don't count), `1` failed
 and nothing written (including HTTP 401 on the first request).
 
-Credentials come from `--token-file`, `IONOS_TOKEN`, or
+`ionos-export` takes credentials from `--token-file`, `IONOS_TOKEN`, or
 `IONOS_USERNAME`/`IONOS_PASSWORD`, never from arguments. They are not
 logged, not part of any error message, and not in the snapshot. Output files
 are written atomically with mode 0600 and not overwritten without `--force`.
@@ -94,16 +129,78 @@ with *read* shares on all datacenters. New datacenters are not shared
 automatically. The exporter records `forbidden` coverage and the explorer
 surfaces "partial visibility" rather than silently showing less.
 
+### ionos-explorer: the local server
+
+`ionos-explorer` binds the listen address first (a free port by default),
+then prints `http://127.0.0.1:<port>/login?secret=…` and, with `--open`,
+opens the browser on it. The page works as with a static host (files, the
+demo) and in addition shows *Fetch from IONOS*:
+
+- **Detection.** The server adds `<meta name="ionos-explorer">` to the
+  `index.html` it serves. Only with that tag does the page call
+  `/api/status`; a static build makes no such request. A tab without a
+  session key (opened by hand) says to use the printed link; a server that
+  stopped is reported as not answering.
+- **Fetch.** The token field is an uncontrolled password field
+  (`autocomplete="off"`), read once on submit, cleared at once and posted
+  with the options (skip list, contract number, "keep the token"); it is
+  never React state. `POST /api/fetch` starts the crawl (one at a time;
+  409 otherwise). The page polls `GET /api/status` every 400 ms (an
+  `EventSource` could not send the session header) for requests done of
+  planned and those that could not be read, with Cancel. When it is done,
+  `POST /api/fetch/result` returns the snapshot bytes once and the server
+  drops its copy; the page opens them like a file and keeps them in memory
+  for Download. A fetch still running when the page is reloaded is
+  followed again; a result nobody took is offered ("Open it") and dropped
+  by the next fetch.
+- **Comparison from memory.** A fetch while a snapshot is open makes the
+  open one the comparison base (`comparisonBase`), if it is of the same
+  contract and older; the Changes tab and markers then show what changed
+  since, with no file on disk. Another contract opens without comparison.
+- **Download** (top bar, for a fetched snapshot): plain `.ionx` or
+  `.ionx.age`, encrypted in the browser with `age-encryption` to a
+  passphrase (scrypt) or age recipients, named like `ionos-export` names
+  its files. That is the only way fetched data reaches the disk.
+- **Token held.** The server keeps the token in process memory for
+  Refresh until "Forget token", exit, an HTTP 401 from IONOS, or
+  `--forget-after` (30 minutes) without a fetch; with "Keep the token" off
+  it is dropped when the fetch ends. The top bar shows "token held" with a
+  ✕ to forget it; the fetch panel says until when.
+
+API (all JSON, `Cache-Control: no-store`, session cookie and
+`X-Ionos-Explorer` key required, POSTs with `Content-Type:
+application/json`, same `Origin`, at most 64 KiB):
+
+| Call | Body | Answer |
+|---|---|---|
+| `GET /api/status` | | `{app, version, tokenHeld, tokenForgetAt?, fetch?: {state, done, total, problems, error?, resultReady, size?, startedAt, finishedAt?}}` |
+| `POST /api/fetch` | `{token?, keep, skip?, contractNumber?}` | 202 + status; 409 while one runs; 400 without a token |
+| `POST /api/fetch/cancel` | `{}` | status |
+| `POST /api/fetch/result` | `{}` | the snapshot (`application/octet-stream`), once; 404 when none |
+| `POST /api/forget` | `{}` | status (also cancels a running fetch) |
+
+Dev mode: `IONOS_EXPLORER_URL=http://127.0.0.1:8642 npm run dev` proxies
+`/api` and `/login` to a running `ionos-explorer --listen
+127.0.0.1:8642` (with `Host` and `Origin` rewritten to it, so its checks
+pass) and marks the page like the server does; without the variable dev
+mode behaves like the static build.
+
 ### Explorer (`explorer/`, Vite + React + TypeScript)
 
-Static single-page app. Local-first: open it and drop a snapshot in. A static
-build can later sit behind nginx + oauth2-proxy (SSO) for a team, with no
-code changes.
+Single-page app. Local-first: served by `ionos-explorer`, or as a static
+build from anywhere: open it and drop a snapshot in. A static build can
+later sit behind nginx + oauth2-proxy (SSO) for a team, with no code
+changes (it has no fetch feature there).
 
 Modules:
 
 - `src/snapshot`: unzip (fflate), decrypt (`age-encryption`, the TS port
-  of age), verify checksums against the manifest.
+  of age, loaded only for an encrypted file), verify checksums against the
+  manifest.
+- `src/backend`: talking to `ionos-explorer` (`backend.ts`: session key,
+  detection, API client; `useBackend.ts`: state, polling, taking the
+  result; `snapshots.ts`: comparison base, file names; `encrypt.ts`:
+  encrypting a download).
 - `src/model`: raw API → normalized graph:
   - **Node** `{id, kind, name, dcId, parentId, labels, searchText, raw}`
   - **Edge** `{kind, from, to}`: `nic→lan`, `lan↔pcc`, `lb→lan`,
@@ -445,10 +542,104 @@ edits differ.
   `*.age` except the synthetic fixture.
 - The exporter never writes the token, the `Authorization` header, or
   request bodies anywhere, and blanks password-like fields in responses
-  (see SNAPSHOT_FORMAT.md) in case an API returns one.
-- The explorer has no backend and blocks outbound requests via CSP. A
+  (see SNAPSHOT_FORMAT.md) in case an API returns one. Should an API's
+  error message echo the credentials, `httpx` replaces them with
+  `[credentials removed]` before the message goes anywhere (coverage,
+  screen, log).
+- The explorer in the browser only ever talks to the server it came from
+  (CSP `connect-src 'self'`); a static build has no backend at all. A
   malicious snapshot can at worst render odd text: values are always
   rendered as text, never as HTML.
+
+### ionos-explorer (the local server)
+
+The server holds an IONOS token and confidential data and has no TLS, so
+it trusts nobody else: not other websites the browser has open, not other
+users of the machine, not names that resolve to 127.0.0.1. Each measure is
+tested in `exporter/internal/server/server_test.go` (named in brackets).
+
+- **Loopback only.** `--listen` must be `127.0.0.1`/another loopback IP,
+  `::1` or `localhost`; anything else is refused at start, and there is no
+  flag to override it yet (`TestListenAddresses`, and the command's
+  `TestRefusesWhatItShouldNot`).
+- **Login secret, cookie and session key** (`TestLogin`,
+  `TestPageNeedsLogin`, `TestAPINeedsCookieAndKey`). Three values from
+  `crypto/rand` (32 bytes each), new every run, compared in constant time:
+  the *login secret* in the printed URL; `GET /login?secret=…` sets the
+  *session cookie* `ionos-explorer-<port>` (HttpOnly, SameSite=Strict,
+  Path=/) and answers with a page that moves on to `/#session=<key>` by
+  itself (a redirect at the end of a navigation that started elsewhere,
+  e.g. the launcher file, would not carry a Strict cookie). The page moves
+  the *session key* from the fragment into `sessionStorage` and out of the
+  address bar. Every page and file needs the cookie (Jupyter's model);
+  every API call needs the cookie and the key in `X-Ionos-Explorer`. Why
+  both: browsers send cookies for 127.0.0.1 to every port, so a page of
+  another local user's server on another port, opened in the same
+  browser, would receive the cookie; `sessionStorage` belongs to this
+  origin (port included), and the key is never in a response a cookie
+  alone can get. A key in the URL query instead of the header is not
+  accepted. The login secret stays valid for the run (a second browser can
+  log in with it).
+- **Host check** (`TestHostCheck`): the `Host` header must be
+  `127.0.0.1:<port>` (or `[::1]:<port>`) or `localhost:<port>`, otherwise
+  421. A DNS-rebinding site (a name that resolves to 127.0.0.1) gets
+  nothing, not even the login.
+- **Origin and request shape** (`TestRequestChecks`): POSTs need
+  `Origin: http://<host>` (a missing, `null` or other origin is refused),
+  `Content-Type: application/json` (so no cross-site form or "simple"
+  request gets through), and at most 64 KiB of body; API calls with
+  `Sec-Fetch-Site` other than `same-origin` are refused (navigations
+  included). Unknown fields, malformed tokens (spaces or control
+  characters), skip patterns other than paths/ids and non-numeric
+  contract numbers are refused before anything reaches IONOS.
+- **No CORS** (`TestSecurityHeaders`): no `Access-Control-*` header on any
+  response; `OPTIONS` gets 405.
+- **Headers** (`TestSecurityHeaders`, `TestCSPMatchesTheBuild`): every
+  response carries the build's CSP (the same string as
+  `explorer/vite.config.ts`; a test compares them) plus `frame-ancestors
+  'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  no-referrer`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy` and
+  `Cross-Origin-Resource-Policy: same-origin`; API and login answers
+  `Cache-Control: no-store`.
+- **The token** (`TestTokenNeverLeaks`, `TestWrongToken`,
+  `TestForgetZeroesTheToken`, `TestIdleForget`): it only arrives in a POST
+  body (which is overwritten once handled) and is never logged, put in a
+  URL, an error message, a response or the snapshot: the tests send a
+  token, make the fake API echo it in error bodies, and search every
+  response, the log and the snapshot for it. It is held as a byte slice,
+  overwritten and dropped on Forget, on exit, on a 401 from IONOS, after
+  `--forget-after` unused, and after the fetch when "keep" is off. Limit:
+  Go strings cannot be overwritten, so the copies `net/http` needs for the
+  `Authorization` header (and the decoded JSON string) stay in memory
+  until the garbage collector reuses it.
+- **IONOS stays read-only**: the crawl uses `internal/httpx` as
+  `ionos-export` does (GET/HEAD only, listed hosts only, https except to
+  loopback, no redirects, no bodies); snapshot redaction is unchanged.
+- **One fetch at a time** (`TestOneFetchAtATimeAndCancel`); Cancel and
+  Forget stop a running one. Server timeouts are set (headers 10 s, body
+  30 s, responses 2 min).
+- **Memory only** (`TestMemoryOnly`): the server writes no file; the test
+  runs a fetch with an empty working directory, `TMPDIR`, `HOME` and
+  `XDG_CACHE_HOME` and checks they stay empty. The result is handed over
+  once and dropped (`TestFetch`); the page keeps it in memory until
+  Download. The one file the program writes is the `--open` launcher
+  below.
+- **Opening the browser** (`TestOpensTheBrowserWithoutTheSecretOnACommandLine`):
+  a command line is visible to other users of the machine, so `--open`
+  does not pass the login URL to `xdg-open`/`open`. It writes a page that
+  forwards to it (mode 0600, in a fresh 0700 temp folder) and opens that
+  file; the folder is removed two seconds after the first login, and on
+  exit. The URL is also printed, to the user's own terminal. Sandboxed
+  browsers that cannot read the temp folder (some snap packages) show an
+  error; the printed link works.
+- Diagram exports (SVG, PNG, draw.io) are made in the browser and handed
+  to the browser's downloads through a `blob:` URL; the PNG is drawn from
+  a `blob:` image, which the CSP's `img-src 'self' data: blob:` allows.
+  Names in exported files are escaped (also as HTML inside draw.io
+  labels), and the files reference nothing outside themselves. They
+  contain names, IPs and descriptions from the snapshot: as confidential
+  as the snapshot, but without resource UUIDs (only what the boxes show,
+  such as LAN numbers).
 
 ## Open-source readiness (before publishing)
 
@@ -462,7 +653,8 @@ edits differ.
 - Go module path: currently the local `ionos-explorer/exporter`; switch to
   the public repo path (e.g. `github.com/<org>/<repo>/exporter`).
 - CI: tests, lint, build, plus secret scanning (e.g. gitleaks). Release
-  builds of `ionos-export` for Linux/macOS/Windows with checksums.
+  builds of `ionos-export` and `ionos-explorer` (with `make explorer-app`,
+  so the UI is embedded) for Linux/macOS/Windows with checksums.
 - History hygiene: no real snapshots, tokens, or company-specific names in
   any commit (`.gitignore` already refuses `*.ionx`/`*.age`).
 - `CONTRIBUTING.md`, `SECURITY.md` (how to report issues; what the exporter
@@ -479,4 +671,7 @@ edits differ.
 7. ✅ Canvas for real contracts ([plan](plans/canvas/README.md)): router
    boxes, collapsed groups, detail by zoom, layers, focus and path views,
    own positions, SVG/PNG/draw.io export
-8. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …)
+8. ✅ One binary, `ionos-explorer` ([plan](plans/merged-app.md)): serves
+   the UI on 127.0.0.1 and fetches itself, token typed into the page,
+   data in memory until downloaded
+9. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …)

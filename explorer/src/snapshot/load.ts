@@ -1,6 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
-import { Decrypter } from 'age-encryption'
 import { unzipSync } from 'fflate'
 import { SUPPORTED_FORMAT_VERSION, type Manifest, type Snapshot } from './types'
 
@@ -22,6 +21,8 @@ export function isEncrypted(data: Uint8Array): boolean {
 export async function loadSnapshot(data: Uint8Array, secret?: string): Promise<Snapshot> {
   if (isEncrypted(data)) {
     if (!secret) throw new EncryptedSnapshotError('This snapshot is encrypted. Enter the passphrase or age identity.')
+    // Loaded when needed: most snapshots are opened unencrypted.
+    const { Decrypter } = await import('age-encryption')
     const d = new Decrypter()
     const trimmed = secret.trim()
     if (trimmed.startsWith('AGE-SECRET-KEY-')) d.addIdentity(trimmed)
@@ -59,7 +60,8 @@ export async function loadSnapshot(data: Uint8Array, secret?: string): Promise<S
     listed.add(f.path)
     const bytes = entries[f.path]
     if (!bytes) throw new SnapshotError(`${f.path} is listed in the manifest but missing.`)
-    if (bytesToHex(sha256(bytes)) !== f.sha256) throw new SnapshotError(`${f.path} failed its checksum. The file is corrupt or was modified.`)
+    if (bytesToHex(sha256(bytes)) !== f.sha256)
+      throw new SnapshotError(`${f.path} failed its checksum. The file is corrupt or was modified.`)
     files.set(f.path, JSON.parse(decoder.decode(bytes)))
   }
   for (const name of Object.keys(entries)) {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -339,5 +340,50 @@ func TestCheckPlan(t *testing.T) {
 	}
 	if endpoints.Plan[0].Path != "/contracts" {
 		t.Error("the first request should be the cheap /contracts")
+	}
+}
+
+func TestPlannedAddsUpToProgress(t *testing.T) {
+	// ionos-explorer shows "done of total" from these two callbacks.
+	api := fake(t, demo(t), 4)
+	cfg, _ := start(t, api)
+	cfg.Skip = []string{"/um", "vpn"} // placeholders count too
+	cfg.Generator = "ionos-explorer"
+	var mu sync.Mutex
+	var planned, done int
+	cfg.Planned = func(n int) {
+		mu.Lock()
+		planned += n
+		mu.Unlock()
+	}
+	cfg.Progress = func(snapshot.Coverage) {
+		mu.Lock()
+		done++
+		if done > planned {
+			t.Errorf("%d done of %d planned", done, planned)
+		}
+		mu.Unlock()
+	}
+	res, got := export(t, cfg)
+	if planned != done || done != len(res.Manifest.Coverage) {
+		t.Errorf("planned %d, done %d, coverage %d", planned, done, len(res.Manifest.Coverage))
+	}
+	if got.Manifest.Generator.Name != "ionos-explorer" {
+		t.Errorf("generator %+v", got.Manifest.Generator)
+	}
+}
+
+func TestCancel(t *testing.T) {
+	api := fake(t, demo(t), 100)
+	ctx, cancel := context.WithCancel(context.Background())
+	api.Intercept = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/servers") {
+			cancel()
+		}
+		return false
+	}
+	cfg, _ := start(t, api)
+	if _, err := Run(ctx, cfg); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }

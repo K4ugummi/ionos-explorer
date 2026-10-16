@@ -2,12 +2,17 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'rea
 import './App.css'
 import { applyAnnotations, isEmpty, loadStored, saveStored, storageKey, type Annotations } from './annotations/annotations'
 import { AnnotationsContext } from './annotations/context'
+import { comparisonBase } from './backend/snapshots'
+import { useBackend, type BackendApi } from './backend/useBackend'
 import { diagramFor } from './diagram/build'
 import { CompareContext } from './diff/context'
 import { compareModels, markChanges } from './diff/diff'
+import { buildModel } from './model/build'
 import { DEFAULT_HOPS } from './model/paths'
 import type { GraphNode, Model } from './model/types'
 import { search } from './search/search'
+import type { Manifest } from './snapshot/types'
+import { loadSnapshot } from './snapshot/load'
 import { Changes } from './ui/Changes'
 import { DetailPanel } from './ui/DetailPanel'
 import { modeParams, parseMode, type DiagramMode } from './ui/mode'
@@ -15,6 +20,7 @@ import { OpenScreen } from './ui/OpenScreen'
 import { Overview } from './ui/Overview'
 import { PathPanel } from './ui/PathPanel'
 import { SearchPanel } from './ui/SearchPanel'
+import { DownloadDialog, RefreshDialog } from './ui/SnapshotDialogs'
 import { useHashState } from './ui/useHashState'
 
 // React Flow, ELK and the canvas are only needed on the Diagram tab: their own
@@ -55,9 +61,28 @@ function useDiagramView() {
 /** Width of the detail drawer over the diagram (see .drawer). */
 const DRAWER_WIDTH = 440
 
+interface Open {
+  model: Model
+  demoLinks?: Annotations
+  /** A snapshot of the same contract to compare with. The open one is always the newer. */
+  older?: Model
+  /** The last snapshot fetched by ionos-explorer, as a file (only in memory until downloaded). */
+  fetched?: Fetched
+}
+
+interface Fetched {
+  data: Uint8Array
+  manifest: Manifest
+}
+
 function App() {
-  // `older`: a snapshot of the same contract to compare with. The open one is always the newer.
-  const [open, setOpen] = useState<{ model: Model; demoLinks?: Annotations; older?: Model } | null>(null)
+  const [open, setOpen] = useState<Open | null>(null)
+  // A fetched snapshot opens like a file; the one open before becomes the comparison base (same contract, older).
+  const openFetched = useCallback(async (data: Uint8Array) => {
+    const model = buildModel(await loadSnapshot(data))
+    setOpen((o) => ({ model, older: comparisonBase(o?.model, model), fetched: { data, manifest: model.manifest } }))
+  }, [])
+  const backend = useBackend(openFetched)
   // Fetch the diagram code once the user starts opening a snapshot, while it is read.
   useEffect(() => {
     if (open) return
@@ -66,7 +91,7 @@ function App() {
     for (const e of events) window.addEventListener(e, preload, { once: true, capture: true })
     return () => events.forEach((e) => window.removeEventListener(e, preload, { capture: true }))
   }, [open])
-  if (!open) return <OpenScreen onLoaded={(model, demoLinks) => setOpen({ model, demoLinks })} />
+  if (!open) return <OpenScreen backend={backend} onLoaded={(model, demoLinks) => setOpen({ model, demoLinks })} />
   const compare = (other?: Model) =>
     setOpen((o) => {
       if (!o) return o
@@ -76,10 +101,14 @@ function App() {
     })
   return (
     <Explorer
+      // Annotations are per contract: a fetch of another contract starts afresh.
+      key={storageKey(open.model)}
       model={open.model}
       older={open.older}
       onCompare={compare}
       demoLinks={open.demoLinks}
+      fetched={open.fetched}
+      backend={backend}
       onClose={() => {
         window.history.replaceState(null, '', window.location.pathname + window.location.search)
         setOpen(null)
@@ -93,14 +122,22 @@ function Explorer({
   older,
   onCompare,
   demoLinks,
+  fetched,
+  backend,
   onClose,
 }: {
   model: Model
   older?: Model
   onCompare: (other?: Model) => void
   demoLinks?: Annotations
+  fetched?: Fetched
+  backend: BackendApi
   onClose: () => void
 }) {
+  // A dialog belongs to the snapshot it was opened for: a fetch that lands closes "Refresh".
+  const [dialogState, setDialogState] = useState<{ kind: 'refresh' | 'download'; for?: Fetched }>()
+  const dialog = dialogState?.for === fetched ? dialogState?.kind : undefined
+  const setDialog = (kind?: 'refresh' | 'download') => setDialogState(kind && { kind, for: fetched })
   // Manual links, sites, IP corrections and moved boxes, kept in this browser per contract.
   const key = storageKey(snapshotModel)
   const contract = snapshotModel.manifest.contract?.number
@@ -213,11 +250,22 @@ function Explorer({
                 </button>
               )}
             </div>
-            <span className="spacer" />
-            <button className="btn" onClick={onClose}>
-              Open another snapshot
-            </button>
+            <div className="topbar-actions">
+              <BackendActions api={backend} onRefresh={() => setDialog('refresh')} />
+              {fetched && (
+                <button className="btn" onClick={() => setDialog('download')} title="Save the fetched snapshot as a file">
+                  Download
+                </button>
+              )}
+              <button className="btn" onClick={onClose}>
+                Open another snapshot
+              </button>
+            </div>
           </header>
+          {dialog === 'refresh' && <RefreshDialog api={backend} onClose={() => setDialog(undefined)} />}
+          {dialog === 'download' && fetched && (
+            <DownloadDialog data={fetched.data} manifest={fetched.manifest} onClose={() => setDialog(undefined)} />
+          )}
           <div className="workspace">
             <SearchPanel model={model} query={query} setQuery={setQuery} selectedId={selected?.id} onSelect={navigate} />
             {view === 'diagram' ? (
@@ -300,6 +348,33 @@ function Explorer({
         </div>
       </CompareContext.Provider>
     </AnnotationsContext.Provider>
+  )
+}
+
+/** Top-bar part of the ionos-explorer backend: a held token (with Forget) and Refresh, showing a running fetch. */
+function BackendActions({ api, onRefresh }: { api: BackendApi; onRefresh: () => void }) {
+  if (api.backend.kind !== 'ready') return null
+  const { tokenHeld, fetch: f } = api.backend.status
+  return (
+    <>
+      {tokenHeld && (
+        <span className="pill token-pill" title="The IONOS API token is held in the memory of ionos-explorer on this computer">
+          token held
+          <button
+            className="token-forget"
+            onClick={() => void api.forget()}
+            disabled={api.busy}
+            aria-label="Forget token"
+            title="Forget token"
+          >
+            ✕
+          </button>
+        </span>
+      )}
+      <button className="btn" onClick={onRefresh} title="Fetch the contract from IONOS again and compare">
+        {f?.state === 'running' ? `Fetching ${f.done}/${f.total}…` : 'Refresh'}
+      </button>
+    </>
   )
 }
 

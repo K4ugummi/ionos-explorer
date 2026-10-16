@@ -14,7 +14,7 @@
       "required": ["name", "version"],
       "additionalProperties": false,
       "properties": {
-        "name": { "enum": ["ionos-export", "ionos-fixture"] },
+        "name": { "enum": ["ionos-export", "ionos-explorer", "ionos-fixture"] },
         "version": { "type": "string" }
       }
     },

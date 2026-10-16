@@ -38,8 +38,16 @@ type Config struct {
 	Parallel int
 	Version  string
 	Now      func() time.Time
-	// Progress, if set, is called once per finished collection request.
+	// Progress, if set, is called once per finished collection request,
+	// possibly from several goroutines at once.
 	Progress func(snapshot.Coverage)
+	// Planned, if set, is called with the number of collection requests
+	// added to the plan: the top-level ones at the start, then per child
+	// endpoint once its parent is known. Each planned request ends in
+	// exactly one Progress call, so the sums give "done of total".
+	Planned func(n int)
+	// Generator names the program in the manifest; "ionos-export" when empty.
+	Generator string
 }
 
 type Result struct {
@@ -92,6 +100,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Generator == "" {
+		cfg.Generator = "ionos-export"
+	}
 	if err := checkPlan(cfg.Plan); err != nil {
 		return nil, err
 	}
@@ -106,6 +117,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 
+	x.planned(len(roots))
 	// One request first, so bad credentials fail fast instead of 100 times.
 	first := x.endpoint(ctx, roots[0])
 	if len(first) == 1 && first[0].cov.HTTPStatus == 401 {
@@ -128,7 +140,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	m := snapshot.Manifest{
 		CreatedAt: cfg.Now().UTC().Truncate(time.Second),
-		Generator: snapshot.Generator{Name: "ionos-export", Version: cfg.Version},
+		Generator: snapshot.Generator{Name: cfg.Generator, Version: cfg.Version},
 	}
 	used := map[string]bool{}
 	for _, ep := range cfg.Plan {
@@ -186,6 +198,12 @@ func checkPlan(plan []endpoints.Endpoint) error {
 	return nil
 }
 
+func (x *run) planned(n int) {
+	if x.cfg.Planned != nil && n > 0 {
+		x.cfg.Planned(n)
+	}
+}
+
 func (x *run) base(api string) string {
 	if b, ok := x.cfg.BaseURLs[api]; ok {
 		return b
@@ -219,6 +237,11 @@ func (x *run) endpoint(ctx context.Context, ep endpoints.Endpoint) []fetched {
 }
 
 func (x *run) children(ctx context.Context, ep endpoints.Endpoint, parent fetched) {
+	if x.excluded(ep) || parent.doc == nil {
+		x.planned(1) // one placeholder below
+	} else {
+		x.planned(len(items(parent.doc)))
+	}
 	switch {
 	case x.excluded(ep):
 		x.record(placeholder(ep, snapshot.StatusSkipped, errExcluded), nil)

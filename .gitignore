@@ -10,3 +10,5 @@
 .env.*
 
 /bin/
+# The explorer build embedded into ionos-explorer (make explorer-app)
+/exporter/internal/webui/dist/

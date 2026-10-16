@@ -144,3 +144,24 @@ func TestAPIError(t *testing.T) {
 		t.Error(len(got))
 	}
 }
+
+func TestCredentialsNeverInErrors(t *testing.T) {
+	// An API (or a proxy) that echoes what it got must not put the secret
+	// into coverage or on screen, not even cut in half by the length limit.
+	srv, host := server(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, `{"messages":[{"message":"%s header %s"}]}`, r.URL.Query().Get("pad"), r.Header.Get("Authorization"))
+	})
+	for _, creds := range []Credentials{{Token: "tok-0123456789"}, {Username: "u", Password: "pw-0123456789"}} {
+		c := New(Options{Credentials: creds, Hosts: []string{host}})
+		for _, pad := range []int{1, 490} {
+			r, err := c.Get(context.Background(), srv.URL+"/x?pad="+strings.Repeat("x", pad))
+			if err != nil || r.Status != http.StatusForbidden {
+				t.Fatal(err, r)
+			}
+			if strings.Contains(r.Error, "0123") || strings.Contains(r.Error, creds.header()[7:]) || (pad == 1) != strings.Contains(r.Error, "[credentials removed]") {
+				t.Errorf("%s, pad %d: %q", creds, pad, r.Error)
+			}
+		}
+	}
+}

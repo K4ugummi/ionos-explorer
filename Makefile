@@ -1,5 +1,4 @@
-
-.PHONY: test fixture exporter explorer-dev explorer-build
+.PHONY: test fixture exporter explorer-app explorer-dev explorer-build
 
 test:
 	cd exporter && go vet ./... && go test ./...
@@ -12,6 +11,14 @@ fixture:
 
 exporter:
 	cd exporter && go build -trimpath -o ../bin/ionos-export ./cmd/ionos-export
+
+# The single binary: the explorer's production build embedded (build tag
+# embedui) in ionos-explorer, which serves it and fetches from IONOS itself.
+explorer-app:
+	cd explorer && npm run build
+	rm -rf exporter/internal/webui/dist
+	cp -R explorer/dist exporter/internal/webui/dist
+	cd exporter && go build -trimpath -tags embedui -o ../bin/ionos-explorer ./cmd/ionos-explorer
 
 explorer-dev:
 	cd explorer && npm run dev

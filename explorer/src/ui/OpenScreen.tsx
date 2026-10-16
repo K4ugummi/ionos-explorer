@@ -6,9 +6,15 @@ import { parse, type Annotations } from '../annotations/annotations'
 import { buildModel } from '../model/build'
 import type { Model } from '../model/types'
 import { EncryptedSnapshotError, isEncrypted, loadSnapshot } from '../snapshot/load'
+import type { BackendApi } from '../backend/useBackend'
+import { FetchPanel } from './FetchPanel'
 
-/** `demoLinks`: example manual links that come with the demo snapshot. */
-export function OpenScreen({ onLoaded }: { onLoaded: (m: Model, demoLinks?: Annotations) => void }) {
+/**
+ * `demoLinks`: example manual links that come with the demo snapshot.
+ * `backend`: ionos-explorer, when it served this page (the fetch panel shows only then).
+ */
+export function OpenScreen({ backend, onLoaded }: { backend: BackendApi; onLoaded: (m: Model, demoLinks?: Annotations) => void }) {
+  const local = backend.backend.kind !== 'none'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [over, setOver] = useState(false)
@@ -70,8 +76,21 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model, demoLinks?: Anno
       <div className="open-card">
         <h1>IONOS Explorer</h1>
         <p>
-          Search and browse an entire IONOS Cloud contract from a snapshot made by <code>ionos-export</code>.
+          {local ? (
+            'Search and browse an entire IONOS Cloud contract: fetch it now, or open a snapshot file.'
+          ) : (
+            <>
+              Search and browse an entire IONOS Cloud contract from a snapshot made by <code>ionos-export</code>.
+            </>
+          )}
         </p>
+
+        {local && (
+          <>
+            <FetchPanel api={backend} />
+            <h2 className="open-or">Open a snapshot file</h2>
+          </>
+        )}
 
         <div
           className={`drop${over ? ' over' : ''}`}
@@ -127,7 +146,9 @@ export function OpenScreen({ onLoaded }: { onLoaded: (m: Model, demoLinks?: Anno
         )}
 
         <div className="fine">
-          Snapshots are opened locally in your browser. Nothing is uploaded, and this app never contacts the IONOS API.
+          {local
+            ? 'Files are opened in this browser and not uploaded. Fetching runs in the ionos-explorer program on this computer, which sends GET requests only and keeps the token and the data in memory.'
+            : 'Snapshots are opened locally in your browser. Nothing is uploaded, and this page never contacts the IONOS API.'}
         </div>
       </div>
     </div>

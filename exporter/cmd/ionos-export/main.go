@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -108,7 +107,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		return 0
 	}
 
-	bases, hosts, err := apiBases(*baseURL)
+	bases, hosts, err := endpoints.Bases(*baseURL)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -179,30 +178,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		return exitPartial
 	}
 	return 0
-}
-
-// apiBases returns the base URL per API and the hosts the client may reach.
-func apiBases(override string) (map[string]string, []string, error) {
-	bases := map[string]string{}
-	seen := map[string]bool{}
-	var hosts []string
-	for _, a := range endpoints.APIs {
-		base := a.BaseURL
-		if override != "" {
-			u, err := url.Parse(strings.TrimSuffix(override, "/"))
-			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-				return nil, nil, fmt.Errorf("--base-url %q: want an absolute http(s) URL", override)
-			}
-			base = u.String() + a.Prefix()
-		}
-		bases[a.ID] = base
-		u, _ := url.Parse(base)
-		if !seen[u.Host] {
-			seen[u.Host] = true
-			hosts = append(hosts, u.Host)
-		}
-	}
-	return bases, hosts, nil
 }
 
 func credentials(tokenFile string, getenv func(string) string) (httpx.Credentials, error) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fixtureModel, previousFixtureModel } from '../test/fixture'
-import { compareModels, countsByDc } from './diff'
+import { compareModels, countsByDc, timeBetween } from './diff'
 
 describe('comparing the demo with its state two weeks earlier', async () => {
   const [older, newer] = await Promise.all([previousFixtureModel(), fixtureModel()])
@@ -52,5 +52,16 @@ describe('comparing the demo with its state two weeks earlier', async () => {
     const core = [...newer.nodes.values()].find((n) => n.name === 'fra-prod-core')!
     expect(countsByDc(diff).get(core.id)).toMatchObject({ added: 9, removed: expect.any(Number), changed: expect.any(Number) })
     expect(diff.counts.added + diff.counts.removed + diff.counts.changed).toBe(diff.changes.length)
+  })
+})
+
+describe('timeBetween', () => {
+  it('words the time between two snapshots', () => {
+    expect(timeBetween('2026-10-01T08:00:00Z', '2026-10-15T08:00:00Z')).toBe('14 days')
+    expect(timeBetween('2026-10-15T08:00:00Z', '2026-10-15T08:00:40Z')).toBe('less than a minute')
+    expect(timeBetween('2026-10-15T08:00:00Z', '2026-10-15T08:01:10Z')).toBe('1 minute')
+    expect(timeBetween('2026-10-15T08:00:00Z', '2026-10-15T08:12:00Z')).toBe('12 minutes')
+    expect(timeBetween('2026-10-15T11:00:00Z', '2026-10-15T08:00:00Z')).toBe('3 hours')
+    expect(timeBetween('2026-10-15T08:00:00Z', '2026-10-16T08:00:00Z')).toBe('1 day')
   })
 })

@@ -75,6 +75,7 @@ type Options struct {
 }
 
 type Client struct {
+	creds   Credentials
 	http    *http.Client
 	retries int
 	backoff time.Duration
@@ -101,6 +102,7 @@ func New(o Options) *Client {
 		hosts[strings.ToLower(h)] = true
 	}
 	return &Client{
+		creds: o.Credentials,
 		http: &http.Client{
 			Transport: &guard{hosts: hosts, next: &headers{opts: o, auth: o.Credentials.header(), next: base}},
 			// A redirect could point anywhere; treat it as an error instead.
@@ -228,22 +230,34 @@ func (c *Client) once(ctx context.Context, rawURL string) (resp *Response, wait 
 		return nil, 0, fmt.Errorf("%w: response larger than %d MB", ErrRefused, MaxBody>>20)
 	}
 	resp = &Response{Status: r.StatusCode}
-	switch {
-	case r.StatusCode >= 200 && r.StatusCode < 300:
+	if r.StatusCode >= 200 && r.StatusCode < 300 {
 		resp.Body = body
+		return resp, 0, nil
+	}
+	// Scrubbed before parsing, so the 500-character cut cannot split a secret.
+	resp.Error = apiError(r.StatusCode, []byte(c.creds.Scrub(string(body))))
+	switch {
 	case r.StatusCode == http.StatusTooManyRequests:
-		resp.Error = apiError(r.StatusCode, body)
 		wait = retryAfter(r.Header)
 		if wait <= 0 {
 			wait = time.Nanosecond // use the backoff
 		}
 	case r.StatusCode >= 500:
-		resp.Error = apiError(r.StatusCode, body)
 		wait = time.Nanosecond
-	default:
-		resp.Error = apiError(r.StatusCode, body)
 	}
 	return resp, wait, nil
+}
+
+// Scrub removes the credentials from a message, should an API (or a proxy
+// in between) ever echo them in an error that ends up in coverage or on
+// screen.
+func (c Credentials) Scrub(msg string) string {
+	for _, secret := range []string{c.Token, c.Password, strings.TrimPrefix(c.header(), "Basic ")} {
+		if len(secret) >= 4 {
+			msg = strings.ReplaceAll(msg, secret, "[credentials removed]")
+		}
+	}
+	return msg
 }
 
 // retryAfter reads Retry-After in seconds; HTTP dates fall back to the backoff.

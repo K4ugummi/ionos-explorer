@@ -4,6 +4,7 @@
 package endpoints
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"slices"
@@ -115,6 +116,32 @@ func FindAPI(id string) (API, bool) {
 		}
 	}
 	return API{}, false
+}
+
+// Bases returns the base URL per API and the hosts a client may reach. With
+// an override (--base-url, for a local mock), every API lives below it at
+// its Prefix.
+func Bases(override string) (map[string]string, []string, error) {
+	bases := map[string]string{}
+	seen := map[string]bool{}
+	var hosts []string
+	for _, a := range APIs {
+		base := a.BaseURL
+		if override != "" {
+			u, err := url.Parse(strings.TrimSuffix(override, "/"))
+			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+				return nil, nil, fmt.Errorf("--base-url %q: want an absolute http(s) URL", override)
+			}
+			base = u.String() + a.Prefix()
+		}
+		bases[a.ID] = base
+		u, _ := url.Parse(base)
+		if !seen[u.Host] {
+			seen[u.Host] = true
+			hosts = append(hosts, u.Host)
+		}
+	}
+	return bases, hosts, nil
 }
 
 var param = regexp.MustCompile(`\{[A-Za-z0-9]+\}`)

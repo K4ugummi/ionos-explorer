@@ -187,3 +187,16 @@ export function countsByDc(diff: Diff): Map<string, Record<ChangeType, number>> 
   }
   return out
 }
+
+/** "14 days", or for snapshots fetched again the same day "12 minutes", "3 hours", "less than a minute". */
+export function timeBetween(a: string, b: string) {
+  const ms = Math.abs(new Date(b).getTime() - new Date(a).getTime())
+  if (ms < 60_000) return 'less than a minute'
+  const [n, unit] =
+    ms < 3_600_000
+      ? [Math.round(ms / 60_000), 'minute']
+      : ms < 86_400_000
+        ? [Math.round(ms / 3_600_000), 'hour']
+        : [Math.round(ms / 86_400_000), 'day']
+  return `${n} ${unit}${n === 1 ? '' : 's'}`
+}

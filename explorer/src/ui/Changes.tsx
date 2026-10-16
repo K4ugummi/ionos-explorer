@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import previousDemoUrl from '../../../fixtures/demo-contract-previous.ionx?url'
-import type { Change, ChangeType, Diff, FieldChange } from '../diff/diff'
+import { timeBetween, type Change, type ChangeType, type Diff, type FieldChange } from '../diff/diff'
 import { KINDS } from '../model/kinds'
 import { buildModel } from '../model/build'
 import type { Model, NodeKind } from '../model/types'
@@ -13,7 +13,6 @@ const TYPES: [ChangeType, string][] = [
   ['removed', 'Removed'],
 ]
 
-const days = (a: string, b: string) => Math.round(Math.abs(new Date(b).getTime() - new Date(a).getTime()) / 86_400_000)
 const date = (s: string) => new Date(s).toLocaleString()
 
 /**
@@ -80,7 +79,7 @@ export function Changes({
       <h1>Changes</h1>
       <p className="lead">
         From {date(older.manifest.createdAt)} to {date(newer.manifest.createdAt)} (
-        {days(older.manifest.createdAt, newer.manifest.createdAt)} days). The open snapshot is the newer one.
+        {timeBetween(older.manifest.createdAt, newer.manifest.createdAt)}). The open snapshot is the newer one.
       </p>
       <div className="row changes-bar">
         {TYPES.map(([t, label]) => (

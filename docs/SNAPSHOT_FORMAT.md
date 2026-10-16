@@ -1,6 +1,7 @@
 # Snapshot format v1 (`.ionx`)
 
-The contract between `ionos-export` and the explorer. Any change that an
+The contract between `ionos-export` (or `ionos-explorer`, which runs the
+same crawl) and the explorer. Any change that an
 older explorer cannot read bumps `formatVersion`.
 
 ## Container
@@ -47,7 +48,8 @@ Each file is the API's JSON response **as returned**, with three changes:
 3. **Secrets removed**: a non-empty string in a field named `password`,
    `imagePassword`, `preSharedKey`, `psk`, `privateKey` or `secret` (any case)
    becomes `"[removed by ionos-export]"`. The APIs should not return these;
-   this is a safety net.
+   this is a safety net. Should an API's error message echo the
+   credentials, they become `[credentials removed]` in `coverage[].error`.
 
 Nothing else is renamed, dropped or interpreted.
 
@@ -59,7 +61,7 @@ Validated by [`schema/manifest.schema.json`](../schema/manifest.schema.json).
 |---|---|
 | `formatVersion` | `1` |
 | `createdAt` | export time (UTC, RFC 3339) |
-| `generator` | `{name: "ionos-export" \| "ionos-fixture", version}` |
+| `generator` | `{name: "ionos-export" \| "ionos-explorer" \| "ionos-fixture", version}`; `ionos-explorer` runs the same crawl as `ionos-export` |
 | `synthetic` | `true` for generated demo data. The explorer shows a banner. |
 | `contract` | `{number, owner}` from `/contracts` |
 | `apis[]` | `{id, name, version, baseUrl, region?}` |
