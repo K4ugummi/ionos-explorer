@@ -23,6 +23,7 @@ import { contractDiagram, datacenterDiagram, diagramFor, focusDiagram, pathDiagr
 import { elk } from './elk'
 import { useDismiss } from './dismiss'
 import { legendFits, refitOnResize, type Box, type Framing } from './framing'
+import { ExportMenu } from './ExportMenu'
 import { emphasized, hiddenBy, LAYERS, loadLayers, saveLayers, type Layers } from './layers'
 import { LayersMenu } from './LayersMenu'
 import { lodFor, type Lod } from './lod'
@@ -227,6 +228,27 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, mode, on
   const name = (id: string) => model.nodes.get(id)?.name ?? id
   const modeTitle =
     mode?.kind === 'focus' ? `Focus: ${name(mode.id)}` : mode?.kind === 'path' ? `Path: ${name(mode.from)} → ${name(mode.to)}` : undefined
+  // Export: the layout as drawn (own positions applied), what it shows, and of which snapshot.
+  const exportSource = () => {
+    if (!layout || !flow) return undefined
+    const title = modeTitle ?? (dc ? [dc.name, dc.location].filter(Boolean).join(' · ') : 'All datacenters')
+    const view =
+      mode?.kind === 'focus'
+        ? `focus-${name(mode.id)}`
+        : mode?.kind === 'path'
+          ? `path-${name(mode.from)}-to-${name(mode.to)}`
+          : dc
+            ? dc.name
+            : 'contract'
+    const info = {
+      title,
+      view,
+      contract: model.manifest.contract?.number,
+      snapshot: model.manifest.createdAt,
+      comparedWith: diff?.older.manifest.createdAt,
+    }
+    return { layout, info }
+  }
   // Frame the diagram in the part of the canvas the drawer leaves free.
   const fit = useMemo(
     () => ({ padding: { top: '24px', left: '64px', bottom: '24px', right: `${rightInset + 24}px` } as const, maxZoom: 1, duration: 200 }),
@@ -425,13 +447,16 @@ function Canvas({ model, dcId, selectedId, matches, onSelect, onOpenDc, mode, on
             scope={mode?.kind === 'path' && !noRoute ? 'path' : dc || mode ? 'datacenter' : 'contract'}
             comparing={!!diff}
           />
+          <ExportMenu source={exportSource} />
           {ownView && own.size > 0 ? (
             <button
               className="btn small dg-reset"
               onClick={resetLayout}
               title={`Put the ${own.size === 1 ? 'box' : `${own.size} boxes`} you moved in this view back where the automatic layout places them`}
+              aria-label="Reset layout"
             >
-              Reset layout
+              {/* On a narrow screen just "Reset", so the breadcrumbs keep their room. */}
+              Reset<span className="dg-wide"> layout</span>
             </button>
           ) : (
             ownView &&

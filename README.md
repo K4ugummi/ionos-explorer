@@ -87,6 +87,15 @@ as a last resort, marked as such. With no route, both neighbourhoods are
 shown with a hint to add the missing link. Both views live in the URL
 (`focus=`, `path=`, `hops=`); the breadcrumbs, ✕ or the browser's back
 button return to the view before.
+**Export.** "Export" in the diagram bar saves the current view (all
+datacenters, one datacenter, a focus or a path) as an SVG image, a PNG
+image at twice the size, or a draw.io file to edit in diagrams.net:
+the picture as laid out, with your box positions, hidden layers and
+collapsed groups, at full detail whatever the zoom, always in light
+colours, with title, snapshot date and legend; selection and search
+highlighting are left out, comparison markers kept. Files are named
+`ionos-<contract>-<view>-<snapshot date>.svg|png|drawio` and made in the
+browser; nothing is uploaded.
 Links the API cannot see, such as an IPsec tunnel between two Cisco VMs, can
 be added in a resource's details. So can the IPs VMs really use: for NICs with DHCP off IONOS only
 keeps a record that may be outdated (`dhcp:off` finds them), and a

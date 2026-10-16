@@ -40,7 +40,7 @@ export const DiagramActions = createContext<{
 })
 
 /** Lines that are hard to tell apart without their name. */
-const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
+export const ALWAYS_LABELLED = new Set<DiagramEdgeKind>(['cross-connect', 'tunnel', 'manual'])
 
 type Rect = Point & { width: number; height: number }
 

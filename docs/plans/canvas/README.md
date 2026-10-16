@@ -16,7 +16,7 @@ Work through the packages in order; tick them off here when done.
 - [x] [06 Lines between locations](06-contract-routing.md): no curves across cards
 - [x] [07 Focus and path view](07-focus-and-path.md): what is connected, and how A reaches B
 - [x] [08 Own positions](08-own-positions.md): drag boxes, keep them
-- [ ] [09 Export](09-export.md): SVG, PNG, draw.io
+- [x] [09 Export](09-export.md): SVG, PNG, draw.io
 
 01–03 fix what is most visible with real data and come first. 07 is the
 largest feature and the most valuable after that.
@@ -64,6 +64,9 @@ or build a model in the test, like `diagram/scale.test.ts` does.
   `applyPositions`, `offsetTo`), stored as `positions` in
   `explorer/src/annotations/annotations.ts`; drag handling and "Reset
   layout" in `DiagramView.tsx`.
+- Export (09): `explorer/src/diagram/export.ts` (SVG, PNG, draw.io from
+  the layout), `explorer/src/diagram/ExportMenu.tsx` (the "Export" button);
+  `explorer/src/test/xml.ts` parses the files in tests.
 - App shell: `explorer/src/App.tsx` (hash state: `view`, `dc`, `node`, `q`,
   and `focus`, `path`, `hops` for the focus and path views).
 - Styles: `explorer/src/App.css`; colour tokens (light + dark) in

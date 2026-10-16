@@ -323,6 +323,29 @@ Modules:
   datacenter views. Search, selection framing, the minimap and comparisons
   use the moved positions.
 
+  *Export* (`export.ts`, the "Export" button in the bar,
+  `ExportMenu.tsx`): the current view (contract, datacenter, focus or
+  path) as SVG, PNG or draw.io file, built from the layout the canvas
+  draws (own positions applied) and the node data, not from the DOM. So
+  it is independent of zoom, level of detail (always full detail), colour
+  scheme and CSS: hidden layers, collapsed groups, folded LANs, moved
+  boxes and their dropped routes come out as on screen; the selection,
+  search and emphasis dimming and lines shown only on selection do not;
+  comparison markers do (with "Changed since …" in the legend). The SVG
+  is a standalone file: attributes only, the light colour tokens copied
+  from `index.css` (a test keeps them in step), Arial-compatible fonts
+  with fixed sizes, text widths estimated from Arial's glyph widths so
+  long names are cut with "…" like on the canvas, every text XML-escaped
+  (characters XML forbids become U+FFFD), a footer with the view's title,
+  contract, snapshot time and legend. PNG: that SVG drawn from a `blob:`
+  image onto a canvas at 2× (less beyond 50 Mpx). draw.io: an
+  uncompressed `mxfile` with one vertex per box (groups as containers),
+  one edge per line (ELK's bend points as waypoints, in the coordinates of
+  the innermost group holding both ends), and the title and legend on a
+  second layer. Files are named `ionos-<contract>-<view>-<snapshot
+  date>.<ext>` (only `A–Z a–z 0–9 . _ -`) and saved with `a[download]` on a
+  `blob:` URL; nothing is uploaded.
+
   Two layout rules came with these views and leave the earlier views as
   they were: in a linked box, a group no routed line enters (a packed server
   group; lines end at its box) keeps its own algorithm; and lines between
@@ -453,5 +476,7 @@ edits differ.
 4. ✅ Diagram: contract overview with Cross Connects, datacenter drill-down
 5. ✅ Appliance detection, VPN Gateway coverage, manual links and sites
 6. ✅ IP corrections, Security Groups, comparing snapshots
-7. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …),
-   SVG/PNG/draw.io export
+7. ✅ Canvas for real contracts ([plan](plans/canvas/README.md)): router
+   boxes, collapsed groups, detail by zoom, layers, focus and path views,
+   own positions, SVG/PNG/draw.io export
+8. Wider coverage (DNS, other DBaaS, NFS, Object Storage, …)

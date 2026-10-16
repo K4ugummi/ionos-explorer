@@ -826,6 +826,11 @@ button.pill {
 @media (max-width: 520px) {
   .dg-bar {
     gap: 12px;
+    padding: 6px 10px;
+  }
+
+  .dg-bar .dg-wide {
+    display: none;
   }
 
   .dg-hops-label,
@@ -838,6 +843,7 @@ button.pill {
   }
 
   .dg-bar .dg-layers,
+  .dg-bar .dg-export,
   .dg-bar .dg-reset {
     margin-left: 0;
   }
@@ -888,9 +894,10 @@ button.pill {
   margin-left: auto;
 }
 
-/* Popovers hanging from the bar: the legend, the layers. */
+/* Popovers hanging from the bar: the legend, the layers, export. */
 .dg-legend-pop,
-.dg-layers-pop {
+.dg-layers-pop,
+.dg-export-pop {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
@@ -932,6 +939,75 @@ button.pill {
   position: relative;
   flex: none;
   margin-left: -8px;
+}
+
+/* "Export": the view as SVG, PNG or draw.io file */
+.dg-export {
+  position: relative;
+  flex: none;
+  margin-left: -8px;
+}
+
+.dg-export > .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dg-export-icon {
+  flex: none;
+}
+
+.dg-export-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 280px;
+  font-size: 13px;
+}
+
+.dg-export-note {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.dg-export-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 8px;
+  margin: 0 -8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.dg-export-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.dg-export-item:disabled {
+  cursor: progress;
+  color: var(--muted);
+}
+
+.dg-export-item .t {
+  font-weight: 600;
+}
+
+.dg-export-item .s {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.dg-export-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--danger);
 }
 
 /* "Reset layout": only while the view has boxes the user moved */
