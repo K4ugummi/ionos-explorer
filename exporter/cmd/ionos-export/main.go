@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -206,7 +207,10 @@ func credentials(tokenFile string, getenv func(string) string) (httpx.Credential
 }
 
 func printPlan(w io.Writer, bases map[string]string, hosts []string) {
-	fmt.Fprintf(w, "ionos-export sends only GET requests, only to %s.\n", strings.Join(hosts, ", "))
+	fmt.Fprintln(w, "ionos-export sends only GET requests, only to these hosts:")
+	for _, h := range foldHosts(hosts) {
+		fmt.Fprintf(w, "  %s\n", h)
+	}
 	fmt.Fprintln(w, "{param} paths are requested once per item of the parent collection.")
 	for _, a := range endpoints.APIs {
 		fmt.Fprintf(w, "\n%s (%s %s)\n", bases[a.ID], a.Name, a.Version)
@@ -221,6 +225,33 @@ func printPlan(w io.Writer, bases map[string]string, hosts []string) {
 			fmt.Fprintf(w, "  GET %-66s %s\n", p, ep.About)
 		}
 	}
+}
+
+// regionalHost is a regional API's host: service.de-fra.ionos.com.
+var regionalHost = regexp.MustCompile(`^([a-z0-9-]+)\.([a-z]{2}-[a-z]{3})\.ionos\.com$`)
+
+// foldHosts writes the hosts of one service in several regions as one:
+// "postgresql.{de-fra,de-txl}.ionos.com". Order as given.
+func foldHosts(hosts []string) []string {
+	regions := map[string][]string{}
+	for _, h := range hosts {
+		if m := regionalHost.FindStringSubmatch(h); m != nil {
+			regions[m[1]] = append(regions[m[1]], m[2])
+		}
+	}
+	var out []string
+	done := map[string]bool{}
+	for _, h := range hosts {
+		m := regionalHost.FindStringSubmatch(h)
+		switch {
+		case m == nil || len(regions[m[1]]) < 2:
+			out = append(out, h)
+		case !done[m[1]]:
+			done[m[1]] = true
+			out = append(out, fmt.Sprintf("%s.{%s}.ionos.com", m[1], strings.Join(regions[m[1]], ",")))
+		}
+	}
+	return out
 }
 
 func line(c snapshot.Coverage) string {

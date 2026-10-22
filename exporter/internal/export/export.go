@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -315,6 +316,7 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 
 	var doc map[string]any
 	var all []any
+	seen := map[string]bool{} // cursors already followed
 	for page := 0; ; page++ {
 		if page == maxPages {
 			return fail(snapshot.StatusError, cov.HTTPStatus, fmt.Sprintf("more than %d pages", maxPages))
@@ -343,18 +345,29 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 		if err := dec.Decode(&body); err != nil || body == nil {
 			return fail(snapshot.StatusError, resp.Status, "response is not a JSON object")
 		}
-		redact(body)
+		redact(body, ep.Secrets)
 		got, isList := body["items"].([]any)
 		if doc == nil {
 			doc = body
 		}
 		all = append(all, got...)
 
-		// Pages are requested by offset rather than by following
-		// _links.next, which could point anywhere.
-		next, _ := asMap(body["_links"])["next"].(string)
-		if !isList || next == "" || len(got) == 0 {
+		// Pages are requested by offset, or by the cursor some APIs return
+		// (pagination.token), rather than by following the next link,
+		// which could point anywhere. MongoDB spells it links.
+		next, _ := links(body)["next"].(string)
+		token, _ := asMap(body["pagination"])["token"].(string)
+		if !isList || (next == "" && token == "") || len(got) == 0 {
 			break
+		}
+		if token != "" {
+			if seen[token] {
+				return fail(snapshot.StatusError, cov.HTTPStatus, "the API returned the same page cursor twice")
+			}
+			seen[token] = true
+			query.Del("offset") // the two may not be combined
+			query.Set("pagination.token", token)
+			continue
 		}
 		offset, _ := number(body["offset"])
 		limit, _ := number(body["limit"])
@@ -372,9 +385,13 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 		doc["items"] = all
 		n := len(all)
 		cov.Items = &n
-		if _, paged := doc["_links"]; paged {
-			doc["offset"], doc["limit"], doc["_links"] = 0, n, map[string]any{}
+		// All pages merged: one page without links or cursor.
+		for _, k := range []string{"_links", "links"} {
+			if _, paged := doc[k]; paged {
+				doc["offset"], doc["limit"], doc[k] = 0, n, map[string]any{}
+			}
 		}
+		delete(doc, "pagination")
 	}
 	cov.Status = snapshot.StatusOK
 	cov.File = snapshot.RawFile(ep.API, path)
@@ -382,28 +399,32 @@ func (x *run) fetch(ctx context.Context, ep endpoints.Endpoint, path string) fet
 }
 
 // secretKeys are fields that may hold a secret in some API's response, e.g.
-// credentials.password in PostgreSQL v2. The APIs are not supposed to return
-// them; should one do so anyway, it never reaches the snapshot.
+// credentials.password in PostgreSQL v2, secretKey of an Object Storage key
+// or userData (cloud-init) of a VM Auto Scaling template. The APIs are not
+// supposed to return them; should one do so anyway, it never reaches the
+// snapshot. Names too common for this list are per endpoint (Secrets).
 var secretKeys = map[string]bool{
 	"password": true, "imagepassword": true, "presharedkey": true, "psk": true, "privatekey": true, "secret": true,
+	"secretkey": true, "keysecret": true, "userdata": true,
 }
 
 // Redacted replaces any secret value in a snapshot.
 const Redacted = "[removed by ionos-export]"
 
-func redact(v any) {
+func redact(v any, extra []string) {
 	switch v := v.(type) {
 	case map[string]any:
 		for k, x := range v {
-			if s, ok := x.(string); ok && s != "" && secretKeys[strings.ToLower(k)] {
+			lk := strings.ToLower(k)
+			if s, ok := x.(string); ok && s != "" && (secretKeys[lk] || slices.Contains(extra, lk)) {
 				v[k] = Redacted
 			} else {
-				redact(x)
+				redact(x, extra)
 			}
 		}
 	case []any:
 		for _, x := range v {
-			redact(x)
+			redact(x, extra)
 		}
 	}
 }
@@ -425,6 +446,14 @@ func contract(doc map[string]any) *snapshot.Contract {
 func items(doc map[string]any) []any {
 	list, _ := doc["items"].([]any)
 	return list
+}
+
+// links is a list's _links, or links in the MongoDB API.
+func links(body map[string]any) map[string]any {
+	if l, ok := body["_links"].(map[string]any); ok {
+		return l
+	}
+	return asMap(body["links"])
 }
 
 func asMap(v any) map[string]any {

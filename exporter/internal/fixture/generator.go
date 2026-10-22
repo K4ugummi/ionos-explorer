@@ -58,6 +58,7 @@ func Generate(opts Options) (w *snapshot.Writer, err error) {
 }
 
 type gen struct {
+	seed     int64
 	previous bool
 	rng      *rand.Rand
 	now      time.Time
@@ -83,6 +84,9 @@ type gen struct {
 	serverIDs    map[string]string           // server name -> id
 	vpn          map[string]map[string][]any // region -> ipsec|wireguard -> gateways
 	vpnChildren  map[string][]any            // gateway id -> tunnels or peers
+	lbIPs        map[string]string           // load balancer name -> public IP
+	albCerts     map[string]string           // application load balancer name -> its server certificate's id
+	services     *services                   // the APIs beyond the Cloud API, PostgreSQL and VPN (services.go)
 	totals       struct{ cores, ram, ssdGB, hddGB, dasGB, nlb, nat int }
 }
 
@@ -165,6 +169,7 @@ func newGen(opts Options) *gen {
 		m.APIs = append(m.APIs, snapshot.API{ID: a.ID, Name: a.Name, Version: a.Version, BaseURL: a.BaseURL, Region: a.Region})
 	}
 	g := &gen{
+		seed:        opts.Seed,
 		previous:    opts.Previous,
 		rng:         rand.New(rand.NewSource(opts.Seed)),
 		now:         opts.CreatedAt.UTC(),
@@ -179,6 +184,8 @@ func newGen(opts Options) *gen {
 		vpn:         map[string]map[string][]any{},
 		postgres:    map[string][]any{},
 		vpnChildren: map[string][]any{},
+		lbIPs:       map[string]string{},
+		albCerts:    map[string]string{},
 	}
 	for _, e := range []string{"terraform@example.com", "terraform@example.com", "a.mueller@example.com", "j.schmidt@example.com", "k.weber@example.com"} {
 		g.users = append(g.users, user{g.uuid(), e})
@@ -215,6 +222,7 @@ func (g *gen) build() {
 	}
 	// A reserved block nobody uses: typical leftover worth spotting.
 	g.newBlock("de/fra", "ipb-de-fra-reserve", 4)
+	g.buildServices()
 
 	if g.previous {
 		g.rewind()
@@ -581,6 +589,7 @@ func (g *gen) buildNLB(d *dc, s *lbSpec) {
 	id := g.uuid()
 	href := fmt.Sprintf("%s/datacenters/%s/networkloadbalancers/%s", cloudBase, d.id, id)
 	pub := g.publicIP(d, obj{})
+	g.lbIPs[s.Name] = pub
 	ts := []any{}
 	for _, ip := range targets {
 		ts = append(ts, obj{"ip": ip, "port": s.Port, "weight": 1, "proxyProtocol": "none",
@@ -623,6 +632,7 @@ func (g *gen) buildALB(d *dc, s *lbSpec) {
 	id := g.uuid()
 	href := fmt.Sprintf("%s/datacenters/%s/applicationloadbalancers/%s", cloudBase, d.id, id)
 	pub := g.publicIP(d, obj{})
+	g.lbIPs[s.Name] = pub
 	rid := g.uuid()
 	rule := obj{
 		"id": rid, "type": "forwarding-rule", "href": href + "/forwardingrules/" + rid, "metadata": g.meta("AVAILABLE"),
@@ -630,6 +640,8 @@ func (g *gen) buildALB(d *dc, s *lbSpec) {
 			"clientTimeout": 50000, "serverCertificates": []any{g.uuid()},
 			"httpRules": []any{obj{"name": "to-" + s.TargetRole, "type": "FORWARD", "targetGroup": tgID, "conditions": []any{}}}},
 	}
+	// The Certificate Manager lists this certificate (services.go).
+	g.albCerts[s.Name] = rule["properties"].(obj)["serverCertificates"].([]any)[0].(string)
 	d.albs = append(d.albs, obj{
 		"id": id, "type": "applicationloadbalancer", "href": href, "metadata": g.meta("AVAILABLE"),
 		"properties": obj{"name": s.Name, "listenerLan": listener.id, "ips": []any{pub}, "targetLan": target.id,
@@ -965,6 +977,7 @@ func (g *gen) emitAll() {
 			"items": nonNil(clusters), "offset": 0, "limit": len(clusters), "_links": obj{},
 		})
 	}
+	g.emitServices()
 }
 
 func (g *gen) dcObject(d *dc) obj {

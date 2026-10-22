@@ -24,6 +24,7 @@ const HistoryAge = 14 * 24 * time.Hour
 //   - txl-core-fw-01's transit NIC got another IP
 //   - lhr-edge-gw-01 got the Security Group sg-edge-ipsec
 //   - erp-app-01's label env changed from test to prod
+//   - the DNS record beta.shop.example.com was added since
 //
 // It runs after building and before writing, and draws no random numbers,
 // so the rest of the output is identical to the current snapshot.
@@ -74,6 +75,8 @@ func (g *gen) rewind() {
 			p["value"] = "test"
 		}
 	}
+
+	g.services.records = slices.DeleteFunc(g.services.records, func(r any) bool { return props(r.(obj))["name"] == "beta" })
 }
 
 func (g *gen) server(name string) obj {

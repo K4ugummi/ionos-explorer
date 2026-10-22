@@ -11,8 +11,17 @@ import (
 	"strings"
 )
 
-// API ids double as directory names under raw/ in the snapshot.
-const CloudAPI = "cloudapi-v6"
+// API ids double as directory names under raw/ in the snapshot. Each is
+// "<family>-v<major>", and "-<region>" for a regional API.
+const (
+	CloudAPI       = "cloudapi-v6"
+	DNSAPI         = "dns-v1"
+	MongoAPI       = "mongodb-v1"
+	CertAPI        = "certmanager-v2"
+	CDNAPI         = "cdn-v1"
+	RegistryAPI    = "containerregistry-v1"
+	AutoscalingAPI = "autoscaling-v1"
+)
 
 type API struct {
 	ID      string
@@ -29,6 +38,14 @@ var (
 	PostgresRegions = []string{"de-fra", "de-txl", "es-vit", "fr-par", "gb-bhx", "gb-lhr", "us-ewr", "us-las", "us-mci"}
 	// https://api.ionos.com/docs/vpn/v1
 	VPNRegions = []string{"de-fra", "de-txl", "es-vit", "fr-par", "gb-lhr", "us-ewr", "us-las", "us-mci"}
+	// The servers lists of the APIs' OpenAPI documents
+	// (https://api.ionos.com/docs/public-<name>.ga.yml).
+	MariaDBRegions    = PostgresRegions
+	InMemoryDBRegions = PostgresRegions
+	KafkaRegions      = PostgresRegions
+	NFSRegions        = VPNRegions
+	LoggingRegions    = PostgresRegions
+	MonitoringRegions = PostgresRegions
 )
 
 // PostgresAPI is the API id of the DBaaS PostgreSQL v2 API in a region. The
@@ -38,16 +55,48 @@ func PostgresAPI(region string) string { return "postgresql-v2-" + region }
 // VPNAPI is the API id of the VPN Gateway API in a region.
 func VPNAPI(region string) string { return "vpn-v1-" + region }
 
+// MariaDBAPI is the API id of the DBaaS MariaDB v2 API in a region (v1 was shut down).
+func MariaDBAPI(region string) string { return "mariadb-v2-" + region }
+
+// InMemoryDBAPI is the API id of the DBaaS In-Memory DB v2 API in a region (v1 was shut down).
+func InMemoryDBAPI(region string) string { return "inmemorydb-v2-" + region }
+
+// KafkaAPI is the API id of the Event Streams for Apache Kafka API in a region.
+func KafkaAPI(region string) string { return "kafka-v1-" + region }
+
+// NFSAPI is the API id of the Network File Storage API in a region.
+func NFSAPI(region string) string { return "nfs-v1-" + region }
+
+// LoggingAPI is the API id of the Logging Service API in a region.
+func LoggingAPI(region string) string { return "logging-v1-" + region }
+
+// MonitoringAPI is the API id of the Monitoring Service API in a region.
+func MonitoringAPI(region string) string { return "monitoring-v1-" + region }
+
 var APIs = slices.Concat(
-	[]API{{ID: CloudAPI, Name: "Cloud API", Version: "v6", BaseURL: "https://api.ionos.com/cloudapi/v6"}},
-	regional(PostgresRegions, PostgresAPI, "DBaaS PostgreSQL", "v2", "postgresql"),
-	regional(VPNRegions, VPNAPI, "VPN Gateway", "v1", "vpn"),
+	[]API{
+		{ID: CloudAPI, Name: "Cloud API", Version: "v6", BaseURL: "https://api.ionos.com/cloudapi/v6"},
+		{ID: DNSAPI, Name: "Cloud DNS", Version: "v1", BaseURL: "https://dns.de-fra.ionos.com"},
+		{ID: MongoAPI, Name: "DBaaS MongoDB", Version: "v1", BaseURL: "https://api.ionos.com/databases/mongodb"},
+		{ID: CertAPI, Name: "Certificate Manager", Version: "v2", BaseURL: "https://certificate-manager.de-fra.ionos.com"},
+		{ID: CDNAPI, Name: "CDN", Version: "v1", BaseURL: "https://cdn.de-fra.ionos.com"},
+		{ID: RegistryAPI, Name: "Container Registry", Version: "v1", BaseURL: "https://api.ionos.com/containerregistries"},
+		{ID: AutoscalingAPI, Name: "VM Auto Scaling", Version: "v1", BaseURL: "https://api.ionos.com/autoscaling"},
+	},
+	regional(PostgresRegions, PostgresAPI, "DBaaS PostgreSQL", "v2", "postgresql", ""),
+	regional(VPNRegions, VPNAPI, "VPN Gateway", "v1", "vpn", ""),
+	regional(MariaDBRegions, MariaDBAPI, "DBaaS MariaDB", "v2", "mariadb", "/v2"),
+	regional(InMemoryDBRegions, InMemoryDBAPI, "DBaaS In-Memory DB", "v2", "in-memory-db", "/v2"),
+	regional(KafkaRegions, KafkaAPI, "Event Streams for Apache Kafka", "v1", "kafka", ""),
+	regional(NFSRegions, NFSAPI, "Network File Storage", "v1", "nfs", ""),
+	regional(LoggingRegions, LoggingAPI, "Logging Service", "v1", "logging", ""),
+	regional(MonitoringRegions, MonitoringAPI, "Monitoring Service", "v1", "monitoring", ""),
 )
 
-func regional(regions []string, id func(string) string, name, version, host string) []API {
+func regional(regions []string, id func(string) string, name, version, host, path string) []API {
 	var out []API
 	for _, r := range regions {
-		out = append(out, API{ID: id(r), Name: name, Version: version, BaseURL: "https://" + host + "." + r + ".ionos.com", Region: r})
+		out = append(out, API{ID: id(r), Name: name, Version: version, BaseURL: "https://" + host + "." + r + ".ionos.com" + path, Region: r})
 	}
 	return out
 }
@@ -63,6 +112,10 @@ type Endpoint struct {
 	Parent string
 	// What the explorer gets from it; printed by `ionos-export --list`.
 	About string
+	// Fields that hold a secret in this endpoint's answers, besides the ones
+	// removed everywhere (export.secretKeys); lower case. For names too
+	// common to remove everywhere, such as "key" (a label's key is none).
+	Secrets []string
 }
 
 var Plan = []Endpoint{
@@ -90,6 +143,21 @@ var Plan = []Endpoint{
 	{API: CloudAPI, Path: "/labels", Query: "depth=1", About: "labels of all resources"},
 	{API: CloudAPI, Path: "/um/users", Query: "depth=1", About: "users (usually forbidden for non-admin users)"},
 	{API: CloudAPI, Path: "/um/groups", Query: "depth=1", About: "groups (usually forbidden for non-admin users)"},
+	{API: CloudAPI, Path: "/backupunits", Query: "depth=1", About: "backup units (their password is never stored)"},
+	{API: CloudAPI, Path: "/snapshots", Query: "depth=1", About: "volume snapshots"},
+
+	{API: DNSAPI, Path: "/zones", About: "DNS zones"},
+	{API: DNSAPI, Path: "/records", About: "DNS records of all zones, linked to the resources whose IPs they name"},
+	{API: DNSAPI, Path: "/secondaryzones", About: "secondary DNS zones and their primary name servers"},
+	{API: DNSAPI, Path: "/reverserecords", About: "reverse DNS records of the contract's IPs"},
+	{API: MongoAPI, Path: "/clusters", About: "MongoDB clusters and the LANs they connect to"},
+	{API: CertAPI, Path: "/certificates", About: "certificates: names and validity (private keys are never returned)"},
+	{API: CertAPI, Path: "/auto-certificates", About: "certificates renewed automatically (ACME)"},
+	{API: CDNAPI, Path: "/distributions", About: "CDN distributions: domain, certificate, origins"},
+	{API: RegistryAPI, Path: "/registries", About: "container registries"},
+	{API: RegistryAPI, Path: "/registries/{registryId}/repositories", Parent: "/registries", About: "repositories in each registry"},
+	{API: AutoscalingAPI, Path: "/groups", Query: "depth=1", About: "VM Auto Scaling groups and the LANs of their servers"},
+	{API: AutoscalingAPI, Path: "/groups/{groupId}/servers", Query: "depth=1", Parent: "/groups", About: "the servers each group created"},
 }
 
 func init() {
@@ -105,6 +173,31 @@ func init() {
 			Endpoint{API: VPNAPI(r), Path: "/wireguardgateways/{gatewayId}/peers", Parent: "/wireguardgateways",
 				About: "WireGuard peers: endpoint and allowed IPs"},
 		)
+	}
+	for _, r := range MariaDBRegions {
+		Plan = append(Plan, Endpoint{API: MariaDBAPI(r), Path: "/clusters", About: "MariaDB clusters and the LAN each connects to"})
+	}
+	for _, r := range InMemoryDBRegions {
+		Plan = append(Plan, Endpoint{API: InMemoryDBAPI(r), Path: "/clusters", About: "In-Memory DB (Redis) clusters and the LAN each connects to"})
+	}
+	for _, r := range KafkaRegions {
+		Plan = append(Plan,
+			Endpoint{API: KafkaAPI(r), Path: "/clusters", About: "Kafka clusters, their brokers and LANs"},
+			// Never /users/{id}/access: it hands out client certificates with private keys.
+			Endpoint{API: KafkaAPI(r), Path: "/clusters/{clusterId}/topics", Parent: "/clusters", About: "Kafka topics"},
+		)
+	}
+	for _, r := range NFSRegions {
+		Plan = append(Plan,
+			Endpoint{API: NFSAPI(r), Path: "/clusters", About: "Network File Storage clusters and the LAN each connects to"},
+			Endpoint{API: NFSAPI(r), Path: "/clusters/{clusterId}/shares", Parent: "/clusters", About: "NFS shares and who may mount them"},
+		)
+	}
+	for _, r := range LoggingRegions {
+		Plan = append(Plan, Endpoint{API: LoggingAPI(r), Path: "/pipelines", About: "logging pipelines (their keys are never stored)", Secrets: []string{"key"}})
+	}
+	for _, r := range MonitoringRegions {
+		Plan = append(Plan, Endpoint{API: MonitoringAPI(r), Path: "/pipelines", About: "monitoring pipelines (their keys are never stored)", Secrets: []string{"key"}})
 	}
 }
 

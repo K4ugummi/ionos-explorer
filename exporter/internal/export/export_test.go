@@ -113,7 +113,12 @@ func TestExportReproducesTheAPI(t *testing.T) {
 	if !m.CreatedAt.Equal(time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)) {
 		t.Errorf("createdAt %v", m.CreatedAt)
 	}
-	if len(m.APIs) != len(endpoints.APIs) || !strings.HasSuffix(m.APIs[0].BaseURL, "/api.ionos.com/cloudapi/v6") || m.APIs[1].Region != "de-fra" {
+	regions := map[string]string{}
+	for _, a := range m.APIs {
+		regions[a.ID] = a.Region
+	}
+	if len(m.APIs) != len(endpoints.APIs) || !strings.HasSuffix(m.APIs[0].BaseURL, "/api.ionos.com/cloudapi/v6") ||
+		regions[endpoints.PostgresAPI("de-fra")] != "de-fra" || regions[endpoints.DNSAPI] != "" {
 		t.Errorf("apis %+v", m.APIs)
 	}
 	// /um/users and /um/groups are forbidden in the demo contract.
@@ -385,5 +390,124 @@ func TestCancel(t *testing.T) {
 	cfg, _ := start(t, api)
 	if _, err := Run(ctx, cfg); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Lists that page by cursor (pagination.token, the Container Registry and
+// DNS) are followed by cursor, without an offset; MongoDB's links count as
+// _links. Merged, every list is one page without links or cursor.
+func TestCursorsAndLinks(t *testing.T) {
+	api := fake(t, demo(t), 100)
+	var queries []string
+	var mu sync.Mutex
+	page := func(items []any, extra map[string]any) map[string]any {
+		doc := map[string]any{"id": "registries", "type": "collection", "items": items}
+		for k, v := range extra {
+			doc[k] = v
+		}
+		return doc
+	}
+	api.Intercept = func(w http.ResponseWriter, r *http.Request) bool {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/api.ionos.com/containerregistries/registries":
+			mu.Lock()
+			queries = append(queries, r.URL.RawQuery)
+			mu.Unlock()
+			if q.Has("offset") {
+				t.Errorf("offset with a cursor: %s", r.URL)
+			}
+			var doc map[string]any
+			switch q.Get("pagination.token") {
+			case "":
+				doc = page([]any{map[string]any{"id": "r1"}}, map[string]any{"pagination": map[string]any{"limit": 1, "token": "c1"}, "_links": map[string]any{"next": "https://evil.example/"}})
+			case "c1":
+				doc = page([]any{map[string]any{"id": "r2"}}, map[string]any{"pagination": map[string]any{"limit": 1, "token": "c2"}})
+			default:
+				doc = page([]any{map[string]any{"id": "r3"}}, map[string]any{"pagination": map[string]any{"limit": 1}})
+			}
+			_ = json.NewEncoder(w).Encode(doc)
+			return true
+		case "/api.ionos.com/databases/mongodb/clusters":
+			if q.Get("offset") == "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "m1"}}, "offset": 0, "limit": 1,
+					"links": map[string]any{"next": "https://evil.example/"}})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "m2"}}, "offset": 1, "limit": 1, "links": map[string]any{}})
+			}
+			return true
+		case "/api.ionos.com/containerregistries/registries/r1/repositories",
+			"/api.ionos.com/containerregistries/registries/r2/repositories",
+			"/api.ionos.com/containerregistries/registries/r3/repositories":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+			return true
+		}
+		return false
+	}
+	cfg, _ := start(t, api)
+	_, got := export(t, cfg)
+	if len(queries) != 3 || queries[1] != "pagination.token=c1" || queries[2] != "pagination.token=c2" {
+		t.Errorf("registry requests %q", queries)
+	}
+	for file, want := range map[string]int{"raw/containerregistry-v1/registries.json": 3, "raw/mongodb-v1/clusters.json": 2} {
+		var doc map[string]any
+		if err := json.Unmarshal(got.Files[file], &doc); err != nil {
+			t.Fatal(file, err)
+		}
+		if n := len(doc["items"].([]any)); n != want {
+			t.Errorf("%s: %d items, want %d", file, n, want)
+		}
+		if _, ok := doc["pagination"]; ok {
+			t.Errorf("%s keeps the cursor", file)
+		}
+		if l, ok := doc["links"]; ok && len(l.(map[string]any)) != 0 {
+			t.Errorf("%s keeps links %v", file, l)
+		}
+	}
+}
+
+func TestRepeatedCursorStops(t *testing.T) {
+	api := fake(t, demo(t), 100)
+	var n atomic.Int64
+	api.Intercept = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api.ionos.com/containerregistries/registries" {
+			return false
+		}
+		n.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "r1"}}, "pagination": map[string]any{"token": "same"}})
+		return true
+	}
+	cfg, _ := start(t, api)
+	cfg.Plan = []endpoints.Endpoint{{API: endpoints.RegistryAPI, Path: "/registries"}}
+	res, _ := export(t, cfg)
+	if c := res.Manifest.Coverage[0]; c.Status != snapshot.StatusError || !strings.Contains(c.Error, "cursor") || n.Load() != 2 {
+		t.Errorf("%+v after %d requests", c, n.Load())
+	}
+}
+
+// A field secret in one API only (the key of a logging pipeline) is removed
+// there; elsewhere a "key" is data (a label's key).
+func TestEndpointSecrets(t *testing.T) {
+	const secret = "pipeline-key-do-not-store"
+	api := fake(t, demo(t), 100)
+	api.Intercept = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/logging.de-txl.ionos.com/pipelines" {
+			return false
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{
+			"id": "p1", "properties": map[string]any{"name": "logs", "key": secret,
+				"replicaConfiguration": map[string]any{"userData": secret, "secretKey": secret}},
+		}}})
+		return true
+	}
+	cfg, _ := start(t, api)
+	_, got := export(t, cfg)
+	for _, b := range got.Files {
+		if bytes.Contains(b, []byte(secret)) {
+			t.Fatal("a secret ended up in the snapshot")
+		}
+	}
+	if !bytes.Contains(got.Files["raw/cloudapi-v6/labels.json"], []byte(`"env"`)) || bytes.Contains(got.Files["raw/cloudapi-v6/labels.json"], []byte(Redacted)) {
+		t.Error("label keys must stay")
 	}
 }

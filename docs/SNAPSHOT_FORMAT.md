@@ -33,21 +33,26 @@ raw/cloudapi-v6/k8s/<clusterId>/nodepools.json
 raw/postgresql-v2-de-fra/clusters.json
 ```
 
-`<apiId>` comes from `manifest.apis[].id`. Regional product APIs (PostgreSQL, VPN
-Gateway, later MariaDB, Kafka, In-Memory DB) get one ID per region, e.g.
-`postgresql-v2-de-txl`.
+`<apiId>` comes from `manifest.apis[].id`: `<family>-v<major>`, and
+`-<region>` for regional product APIs (PostgreSQL, MariaDB, In-Memory DB,
+Kafka, Network File Storage, VPN Gateway, Logging, Monitoring), which get
+one ID per region, e.g. `postgresql-v2-de-txl`.
 
 ## Raw files
 
 Each file is the API's JSON response **as returned**, with three changes:
 
 1. **Paginated collections are merged**: all pages' `items` concatenated,
-   `offset` 0, `limit` = items fetched, `_links` empty.
+   `offset` 0, `limit` = items fetched, `_links` (MongoDB: `links`) empty,
+   a page cursor (`pagination`) removed. Pages are requested by `offset`,
+   or by `pagination.token` where an API returns one; the next link is
+   never followed.
 2. **Canonical serialization**: object keys sorted, 2-space indent, numbers
    kept verbatim, no HTML escaping.
 3. **Secrets removed**: a non-empty string in a field named `password`,
-   `imagePassword`, `preSharedKey`, `psk`, `privateKey` or `secret` (any case)
-   becomes `"[removed by ionos-export]"`. The APIs should not return these;
+   `imagePassword`, `preSharedKey`, `psk`, `privateKey`, `secret`,
+   `secretKey`, `keySecret` or `userData` (any case), and `key` in the
+   Logging and Monitoring pipelines, becomes `"[removed by ionos-export]"`. The APIs should not return these;
    this is a safety net. Should an API's error message echo the
    credentials, they become `[credentials removed]` in `coverage[].error`.
 
@@ -121,6 +126,28 @@ VPN Gateway (regional, `https://vpn.<region>.ionos.com`, API id
 `/wireguardgateways/{gatewayId}/peers` (`connections[].datacenterId/lanId`,
 `gatewayIP`, tunnel `remoteHost` / peer `endpoint.host`).
 
+Cloud API, also: `/backupunits` and `/snapshots` (volume snapshots), `depth=1`.
+
+The other product APIs, each listed in every region it has (the servers of
+its OpenAPI document); none takes `depth`:
+
+| API id | Base URL | Collections |
+|---|---|---|
+| `dns-v1` | `https://dns.de-fra.ionos.com` | `/zones`, `/records` (all zones; `metadata.fqdn`, `metadata.zoneId`), `/secondaryzones`, `/reverserecords` |
+| `mariadb-v2-<region>` | `https://mariadb.<region>.ionos.com/v2` | `/clusters` (`connection`, sizes in GB per instance) |
+| `inmemorydb-v2-<region>` | `https://in-memory-db.<region>.ionos.com/v2` | `/clusters` (`connection`, `persistenceMode`) |
+| `mongodb-v1` | `https://api.ionos.com/databases/mongodb` | `/clusters` (`connections[].cidrList`, `location`, sizes in MB; its lists say `links`, not `_links`) |
+| `kafka-v1-<region>` | `https://kafka.<region>.ionos.com` | `/clusters`, `/clusters/{clusterId}/topics` (no paging). Never `/users/{id}/access`: it returns private keys |
+| `nfs-v1-<region>` | `https://nfs.<region>.ionos.com` (no gb-bhx) | `/clusters` (`connections[].lan`, `metadata.status`), `/clusters/{clusterId}/shares` |
+| `certmanager-v2` | `https://certificate-manager.de-fra.ionos.com` | `/certificates` (`metadata.notAfter`, `expired`, names), `/auto-certificates` |
+| `cdn-v1` | `https://cdn.de-fra.ionos.com` | `/distributions` |
+| `logging-v1-<region>`, `monitoring-v1-<region>` | `https://logging.<region>.ionos.com`, `https://monitoring.<region>.ionos.com` | `/pipelines` (their `key` is removed) |
+| `containerregistry-v1` | `https://api.ionos.com/containerregistries` | `/registries` (paged by cursor, `pagination.token`), `/registries/{registryId}/repositories` |
+| `autoscaling-v1` | `https://api.ionos.com/autoscaling` | `/groups`, `/groups/{groupId}/servers` (`depth=1`) |
+
+Not read: Object Storage buckets (the S3 API needs access keys, not a
+token), API Gateway (end of life), Data Platform.
+
 ## Key cross-references
 
 - NIC `properties.lan` (integer) → LAN `id` (numeric string) in the same datacenter
@@ -131,3 +158,7 @@ VPN Gateway (regional, `https://vpn.<region>.ionos.com`, API id
 - Node pool `datacenterId` + `lans[].id`; Postgres `connection` (v1: `connections[]`)
 - IP block `ipConsumers[]` → `datacenterId`, `serverId`, `nicId`
 - VPN tunnel `remoteHost` / WireGuard peer `endpoint.host` → a public IP in the contract (NIC, NAT, load balancer, VPN gateway `gatewayIP`), else outside
+- MariaDB / In-Memory DB `connection`, MongoDB and Kafka `connections[]` (`lanId`), NFS `connections[]` (`lan`) → datacenter and LAN
+- DNS record (A, AAAA) `content` and reverse record `ip` → any resource with that IP; CNAME/ALIAS/MX/NS/SRV `content` → records of that name, or a service's host (registry `hostname`, database `dnsName`, MongoDB `connectionString`, CDN `domain`)
+- CDN `certificateId` and ALB forwarding rule `serverCertificates[]` → Certificate Manager `/certificates`; CDN `routingRules[].upstream.host` → an IP or DNS name as above
+- Auto scaling group `datacenter.id` + `replicaConfiguration.nics[].lan` (integer); group server `datacenterServer.id` → server
