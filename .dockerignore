@@ -1,0 +1,23 @@
+# Only what the image is built from enters the build context: snapshots,
+# credentials and local builds never reach an image layer, wherever they
+# lie in the working copy.
+*
+!explorer/
+!exporter/
+!fixtures/demo-annotations.json
+!fixtures/demo-contract.ionx
+!fixtures/demo-contract-previous.ionx
+!LICENSE
+!NOTICE
+
+# Inside those: dependencies, builds, and anything that may hold data.
+**/node_modules
+explorer/dist
+exporter/internal/webui/dist
+**/*.ionx
+**/*.age
+**/*.token
+**/.env
+**/.env.*
+!fixtures/demo-contract.ionx
+!fixtures/demo-contract-previous.ionx

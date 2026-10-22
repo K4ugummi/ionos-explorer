@@ -1,0 +1,23 @@
+# IONOS Explorer on Kubernetes: one replica, local users in a volume,
+# restricted Pod Security. Use an overlay (overlays/example) to set the
+# public URL, the image version and the ingress. See deploy/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ionos-explorer
+labels:
+  - pairs:
+      app.kubernetes.io/name: ionos-explorer
+    includeSelectors: true
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - networkpolicy.yaml
+configMapGenerator:
+  - name: ionos-explorer
+    literals:
+      - IONOS_EXPLORER_MODE=hosted
+      - IONOS_EXPLORER_PUBLIC_URL=https://explorer.example.com
+      - IONOS_EXPLORER_LOG_FORMAT=json
+      - IONOS_EXPLORER_MAX_FETCHES=2

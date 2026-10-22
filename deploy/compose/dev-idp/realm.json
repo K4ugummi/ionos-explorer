@@ -1,0 +1,74 @@
+{
+  "realm": "ionos-explorer",
+  "displayName": "IONOS Explorer (test realm)",
+  "enabled": true,
+  "sslRequired": "none",
+  "groups": [{ "name": "explorer-users" }, { "name": "explorer-admins" }],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "alice-dev-password", "temporary": false }],
+      "groups": ["/explorer-admins"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "bob-dev-password", "temporary": false }],
+      "groups": ["/explorer-users"]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.com",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Outsider",
+      "credentials": [{ "type": "password", "value": "carol-dev-password", "temporary": false }]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "ionos-explorer",
+      "name": "IONOS Explorer",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/callback/keycloak"],
+      "webOrigins": [],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8080/",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

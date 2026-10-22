@@ -1,0 +1,25 @@
+# TLS at the ingress (here ingress-nginx and cert-manager; adapt the class and
+# issuer). The explorer needs the original Host header, which every common
+# ingress controller passes. No session affinity is needed (one replica).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ionos-explorer
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [explorer.example.com]
+      secretName: ionos-explorer-tls
+  rules:
+    - host: explorer.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ionos-explorer
+                port:
+                  name: http

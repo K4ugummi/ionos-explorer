@@ -1,0 +1,42 @@
+# Trials and CI: compose.dev.yaml plus a Keycloak with a test realm, to try
+# "Log in with Keycloak" next to local users. Test data only: never real
+# users or secrets here.
+#
+#   docker compose -f compose.dev.yaml -f compose.dev-idp.yaml up -d --build
+#
+# Open http://localhost:8080 and log in with Keycloak as alice (admin),
+# bob (user) or carol (no group: refused); each password is
+# "<name>-dev-password". Keycloak's console: http://localhost:8180/admin
+# (admin / admin). Keycloak needs about half a minute to start; until then
+# the button says it cannot be reached.
+#
+# Keycloak shares the fake API's network namespace like the explorer, so
+# the browser and the explorer reach it at the same address
+# (http://localhost:8180, also its issuer). http is accepted only because
+# the public URL is http://localhost too.
+services:
+  fakeapi:
+    ports:
+      - "127.0.0.1:8180:8180"       # Keycloak's port
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.5
+    command: ["start-dev", "--http-port=8180", "--import-realm"]
+    network_mode: service:fakeapi
+    depends_on: [fakeapi]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+    volumes:
+      - ./dev-idp/realm.json:/opt/keycloak/data/import/realm.json:ro
+
+  explorer:
+    environment:
+      IONOS_EXPLORER_OIDC_PROVIDERS: keycloak
+      IONOS_EXPLORER_OIDC_KEYCLOAK_NAME: Keycloak
+      IONOS_EXPLORER_OIDC_KEYCLOAK_ISSUER: http://localhost:8180/realms/ionos-explorer
+      IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_ID: ionos-explorer
+      IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_SECRET: dev-client-secret
+      IONOS_EXPLORER_OIDC_KEYCLOAK_ALLOWED_GROUPS: explorer-users
+      IONOS_EXPLORER_OIDC_KEYCLOAK_ADMIN_GROUPS: explorer-admins

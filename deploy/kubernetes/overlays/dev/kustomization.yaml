@@ -1,0 +1,43 @@
+# Trials and CI (kind, minikube, …): the image built from this checkout and
+# a fake IONOS API with the synthetic demo contract as a second container in
+# the pod (the explorer sends a token over plain http only to its own
+# loopback). No ingress: kubectl port-forward. See deploy/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ionos-explorer
+resources:
+  - ../../base
+configMapGenerator:
+  - name: ionos-explorer
+    behavior: merge
+    literals:
+      - IONOS_EXPLORER_PUBLIC_URL=http://localhost:8080
+      - IONOS_EXPLORER_BASE_URL=http://127.0.0.1:8792
+      - IONOS_EXPLORER_LOG_FORMAT=text
+images:
+  - name: ghcr.io/k4ugummi/ionos-explorer
+    newName: ionos-explorer
+    newTag: dev
+patches:
+  - target:
+      kind: Deployment
+      name: ionos-explorer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: fakeapi
+          image: ionos-fakeapi:dev
+          imagePullPolicy: IfNotPresent
+          args: [--listen, 127.0.0.1:8792, --token, demo-token]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent

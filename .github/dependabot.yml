@@ -1,0 +1,40 @@
+# Weekly updates, minor and patch versions grouped into one pull request
+# per ecosystem; major versions each on their own.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { update-types: [minor, patch] }
+
+  - package-ecosystem: gomod
+    directory: /exporter
+    schedule: { interval: weekly }
+    groups:
+      go: { update-types: [minor, patch] }
+
+  - package-ecosystem: npm
+    directory: /explorer
+    schedule: { interval: weekly }
+    groups:
+      explorer: { update-types: [minor, patch] }
+
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule: { interval: weekly }
+    groups:
+      e2e: { update-types: [minor, patch] }
+
+  # The base images in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      images: { update-types: [minor, patch] }
+
+  # Caddy in deploy/compose. Not covered: the tools run with go run
+  # pkg@version (Makefile, scripts/) and the gitleaks image in ci.yaml.
+  - package-ecosystem: docker-compose
+    directory: /deploy/compose
+    schedule: { interval: weekly }

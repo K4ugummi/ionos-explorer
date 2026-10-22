@@ -1,0 +1,62 @@
+# IONOS Explorer for a team, on one server with Docker Compose.
+# See deploy/README.md. In short:
+#
+#   cp .env.example .env            # set PUBLIC_URL (and IONOS_EXPLORER_IMAGE)
+#   docker compose up -d
+#   docker compose logs explorer    # the one-time link that creates the first admin
+#
+# The explorer speaks plain HTTP on 127.0.0.1:8080; put a reverse proxy
+# with TLS in front (compose.caddy.yaml does that with Caddy).
+name: ionos-explorer
+
+services:
+  explorer:
+    # Until releases are published: make image (tags ionos-explorer) and set
+    # IONOS_EXPLORER_IMAGE=ionos-explorer in .env. Pin a version for real use.
+    image: ${IONOS_EXPLORER_IMAGE:-ghcr.io/k4ugummi/ionos-explorer:latest}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      IONOS_EXPLORER_PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env, the https address users open}
+      IONOS_EXPLORER_LOG_FORMAT: ${LOG_FORMAT:-text}
+      IONOS_EXPLORER_MAX_FETCHES: ${MAX_FETCHES:-2}
+      # The first admin from a file instead of the setup link in the log
+      # (with the secrets: block below; it must be changed at the first login):
+      # IONOS_EXPLORER_ADMIN_USERNAME: admin
+      # IONOS_EXPLORER_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      # The snapshot history: every fetch kept per user in the volume,
+      # encrypted to an age identity (with the secrets: blocks below; make
+      # it with "docker run --rm <image> keygen > secrets/age_identity" and
+      # keep a copy elsewhere: without it the history cannot be read):
+      # IONOS_EXPLORER_AGE_IDENTITY_FILE: /run/secrets/age_identity
+      # Login with an OIDC provider, next to local users (see deploy/README.md;
+      # the client secret with the secrets: blocks below):
+      # IONOS_EXPLORER_OIDC_PROVIDERS: keycloak
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_NAME: Keycloak
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_ISSUER: https://sso.example.com/realms/company
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_ID: ionos-explorer
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_SECRET_FILE: /run/secrets/keycloak_client_secret
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_ALLOWED_GROUPS: ionos-explorer
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_ADMIN_GROUPS: ionos-explorer-admins
+    # secrets: [admin_password, age_identity, keycloak_client_secret]
+    volumes:
+      - data:/data                  # user accounts, snapshot history
+    ports:
+      - "127.0.0.1:8080:8080"       # only for the proxy on this host; never publish plain HTTP
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: { memory: 1g, cpus: "1.0" }
+
+# secrets:
+#   admin_password:
+#     file: ./secrets/admin_password   # readable by UID 65532: chown 65532 secrets/admin_password; chmod 400 …
+#   age_identity:
+#     file: ./secrets/age_identity     # the same
+#   keycloak_client_secret:
+#     file: ./secrets/keycloak_client_secret   # the same
+
+volumes:
+  data: {}

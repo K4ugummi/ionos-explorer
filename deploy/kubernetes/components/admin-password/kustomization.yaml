@@ -1,0 +1,30 @@
+# The first admin from the Secret ionos-explorer-admin (key admin_password)
+# instead of the setup link in the log; the password must be changed at the
+# first login, and the Secret is ignored once accounts exist. The overlay
+# creates the Secret, for example with a secretGenerator (see
+# overlays/example/kustomization.yaml).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: Deployment
+      name: ionos-explorer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: admin
+          secret:
+            secretName: ionos-explorer-admin
+            defaultMode: 0440
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: admin
+          mountPath: /secrets
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: IONOS_EXPLORER_ADMIN_PASSWORD_FILE
+          value: /secrets/admin_password

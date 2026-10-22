@@ -1,0 +1,36 @@
+# In: only from the ingress controller (adapt the namespace label to yours).
+# Out: DNS, and HTTPS to the IONOS API (whose addresses change, so any
+# address on 443). Tighter with a CNI that filters by name, for example
+# Cilium toFQDNs: "*.ionos.com".
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ionos-explorer
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock: { cidr: "0.0.0.0/0" }
+        - ipBlock: { cidr: "::/0" }
+      ports:
+        - port: 443
+          protocol: TCP

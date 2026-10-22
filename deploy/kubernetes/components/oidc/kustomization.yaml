@@ -1,0 +1,27 @@
+# The client secrets of OIDC login providers: the Secret ionos-explorer-oidc
+# mounted at /oidc, one file per key. The overlay names the providers and
+# points each at its file in the ConfigMap (see overlays/example):
+#   IONOS_EXPLORER_OIDC_PROVIDERS=keycloak
+#   IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_SECRET_FILE=/oidc/keycloak_client_secret
+# The NetworkPolicy lets the pod out to port 443 only: an identity provider
+# on another port needs a rule there.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: Deployment
+      name: ionos-explorer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: oidc
+          secret:
+            secretName: ionos-explorer-oidc
+            defaultMode: 0440
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: oidc
+          mountPath: /oidc
+          readOnly: true

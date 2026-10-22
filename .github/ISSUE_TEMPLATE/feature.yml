@@ -1,0 +1,18 @@
+name: Idea
+description: A feature, a resource type to cover, a deployment to support.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **No real data here** (snapshots, tokens, names or IP addresses of a real contract): issues are public. The program stays read-only against IONOS, so ideas that would change a contract are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do, and what stops you now
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work

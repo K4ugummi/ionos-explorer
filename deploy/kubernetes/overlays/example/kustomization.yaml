@@ -1,0 +1,43 @@
+# Copy this directory, set your host name, the image version and the issuer,
+# then: kubectl apply -k <your copy>. See deploy/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ionos-explorer
+resources:
+  - ../../base
+  - ingress.yaml
+configMapGenerator:
+  - name: ionos-explorer
+    behavior: merge
+    literals:
+      - IONOS_EXPLORER_PUBLIC_URL=https://explorer.example.com
+images:
+  - name: ghcr.io/k4ugummi/ionos-explorer
+    newTag: latest   # pin a version, or digest: sha256:…
+      # Login with an OIDC provider (with the oidc component below):
+      # - IONOS_EXPLORER_OIDC_PROVIDERS=keycloak
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_NAME=Keycloak
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_ISSUER=https://sso.example.com/realms/company
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_ID=ionos-explorer
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_SECRET_FILE=/oidc/keycloak_client_secret
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_ALLOWED_GROUPS=ionos-explorer
+      # - IONOS_EXPLORER_OIDC_KEYCLOAK_ADMIN_GROUPS=ionos-explorer-admins
+# Optional parts, from files in secrets/ (git-ignored); uncomment what you
+# use. The first admin from a file instead of the setup link in the log
+# (secrets/admin_password), the snapshot history (secrets/age_identity,
+# from "docker run --rm ghcr.io/k4ugummi/ionos-explorer keygen"), and the
+# client secrets of OIDC providers (secrets/keycloak_client_secret):
+# secretGenerator:
+#   - name: ionos-explorer-admin
+#     files:
+#       - admin_password=secrets/admin_password
+#   - name: ionos-explorer-age
+#     files:
+#       - age_identity=secrets/age_identity
+#   - name: ionos-explorer-oidc
+#     files:
+#       - keycloak_client_secret=secrets/keycloak_client_secret
+# components:
+#   - ../../components/admin-password
+#   - ../../components/history
+#   - ../../components/oidc

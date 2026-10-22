@@ -1,0 +1,74 @@
+# IONOS Explorer on Docker Swarm. See deploy/README.md.
+#
+#   docker node update --label-add ionos-explorer.data=true <node>   # where the volume lives
+#   PUBLIC_URL=https://explorer.example.com docker stack deploy -c stack.yaml ionos-explorer
+#   docker service logs ionos-explorer_explorer      # the one-time link for the first admin
+#
+# Exactly one instance: sessions and held tokens are in its memory, and two
+# instances must never share the volume.
+services:
+  explorer:
+    # Until releases are published, build the image (make image), push it to
+    # a registry your nodes can pull from, and set IONOS_EXPLORER_IMAGE.
+    image: ${IONOS_EXPLORER_IMAGE:-ghcr.io/k4ugummi/ionos-explorer:latest}
+    read_only: true
+    cap_drop: [ALL]
+    environment:
+      IONOS_EXPLORER_PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, the https address users open}
+      IONOS_EXPLORER_LOG_FORMAT: ${LOG_FORMAT:-json}
+      # The first admin from a Swarm secret instead of the setup link (with
+      # the secrets: blocks below; it must be changed at the first login):
+      #   printf '%s' "$PASSWORD" | docker secret create ionos_explorer_admin_password -
+      # IONOS_EXPLORER_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      # The snapshot history, encrypted to an age identity from a secret:
+      #   docker run --rm <image> keygen | docker secret create ionos_explorer_age_identity -
+      # IONOS_EXPLORER_AGE_IDENTITY_FILE: /run/secrets/age_identity
+      # Login with an OIDC provider, next to local users (see deploy/README.md):
+      #   printf '%s' "$CLIENT_SECRET" | docker secret create ionos_explorer_keycloak_client_secret -
+      # IONOS_EXPLORER_OIDC_PROVIDERS: keycloak
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_NAME: Keycloak
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_ISSUER: https://sso.example.com/realms/company
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_ID: ionos-explorer
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_CLIENT_SECRET_FILE: /run/secrets/keycloak_client_secret
+      # IONOS_EXPLORER_OIDC_KEYCLOAK_ALLOWED_GROUPS: ionos-explorer
+    # secrets:
+    #   - source: ionos_explorer_admin_password
+    #     target: admin_password
+    #   - source: ionos_explorer_age_identity
+    #     target: age_identity
+    #   - source: ionos_explorer_keycloak_client_secret
+    #     target: keycloak_client_secret
+    volumes:
+      - data:/data
+    networks: [proxy]
+    stop_grace_period: 30s
+    deploy:
+      replicas: 1
+      update_config: { order: stop-first }    # never two instances on one volume
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any }
+      placement:
+        constraints: [node.labels.ionos-explorer.data == true]
+      resources:
+        limits: { memory: 1g, cpus: "1.0" }
+      labels:                                 # for Traefik in Swarm mode; adapt or drop
+        traefik.enable: "true"
+        traefik.http.routers.ionos-explorer.rule: Host(`explorer.example.com`)
+        traefik.http.routers.ionos-explorer.entrypoints: websecure
+        traefik.http.routers.ionos-explorer.tls.certresolver: le
+        traefik.http.services.ionos-explorer.loadbalancer.server.port: "8080"
+
+# secrets:
+#   ionos_explorer_admin_password:
+#     external: true
+#   ionos_explorer_age_identity:
+#     external: true
+#   ionos_explorer_keycloak_client_secret:
+#     external: true
+
+volumes:
+  data: {}
+
+networks:
+  proxy:
+    external: true                            # the network your proxy (Traefik) is on

@@ -1,0 +1,5 @@
+# False positives in the history, by fingerprint (commit:file:rule:line): a made-up
+# test token in httpx/client_test.go and an API name in a comment of build.ts.
+80abb8f21e1a50641faaa5e598601ebad5bd8de3:exporter/internal/httpx/client_test.go:generic-api-key:155
+80abb8f21e1a50641faaa5e598601ebad5bd8de3:exporter/internal/httpx/client_test.go:generic-api-key:155
+05f3380361e496399acacbd4e1aa84d2f16f3fe4:explorer/src/model/build.ts:generic-api-key:764

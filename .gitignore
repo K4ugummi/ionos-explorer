@@ -8,8 +8,12 @@
 *.token
 .env
 .env.*
+!.env.example
+# Secrets for the deployment files (deploy/README.md)
+/deploy/**/secrets/
 
 /bin/
+/dist/
 # The explorer build embedded into ionos-explorer (make explorer-app)
 /exporter/internal/webui/dist/
 

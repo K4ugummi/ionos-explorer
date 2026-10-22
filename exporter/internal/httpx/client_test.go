@@ -152,7 +152,7 @@ func TestCredentialsNeverInErrors(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, `{"messages":[{"message":"%s header %s"}]}`, r.URL.Query().Get("pad"), r.Header.Get("Authorization"))
 	})
-	for _, creds := range []Credentials{{Token: "tok-0123456789"}, {Username: "u", Password: "pw-0123456789"}} {
+	for _, creds := range []Credentials{{Token: "tok-0123456789"}, {Username: "u", Password: "pw-0123456789"}} { // gitleaks:allow (made up)
 		c := New(Options{Credentials: creds, Hosts: []string{host}})
 		for _, pad := range []int{1, 490} {
 			r, err := c.Get(context.Background(), srv.URL+"/x?pad="+strings.Repeat("x", pad))

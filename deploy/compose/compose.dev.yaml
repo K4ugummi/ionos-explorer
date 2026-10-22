@@ -1,0 +1,40 @@
+# Trials and CI: the explorer built from this checkout, with a fake IONOS API
+# serving the synthetic demo contract. No IONOS account, no real data.
+#
+#   docker compose -f compose.dev.yaml up -d --build
+#   docker compose -f compose.dev.yaml logs explorer   # the setup link
+#
+# Then open the link, create the admin, and fetch with the token demo-token.
+# The explorer sends a token over plain http only to its own loopback, so it
+# shares the fake API's network namespace (and the fake publishes the port).
+# For the same reason "docker compose restart" fails; use stop and start, or
+# up -d --force-recreate.
+name: ionos-explorer-dev
+
+services:
+  fakeapi:
+    image: ionos-fakeapi:dev
+    build: { context: ../.., target: fakeapi }
+    command: ["--listen", "127.0.0.1:8792", "--token", "demo-token"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:8080:8080"       # the explorer's port
+
+  explorer:
+    image: ionos-explorer:dev
+    build: { context: ../.. }
+    network_mode: service:fakeapi
+    depends_on: [fakeapi]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      IONOS_EXPLORER_PUBLIC_URL: http://localhost:8080
+      IONOS_EXPLORER_BASE_URL: http://127.0.0.1:8792
+    volumes:
+      - data:/data
+
+volumes:
+  data: {}
