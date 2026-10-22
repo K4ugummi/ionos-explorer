@@ -1,21 +1,22 @@
-# Every push and pull request: tests, vulnerability and secret scans, the
-# deployment files, and the container image (built for amd64 and arm64, not
-# pushed; amd64 smoke-tested). The steps call Makefile targets and scripts/,
-# so each runs the same locally.
+# Every push to main: tests, vulnerability and secret scans, the deployment
+# files, and the container image (built for amd64 and arm64, not pushed;
+# amd64 smoke-tested). No pull requests (Dependabot's included): runner
+# minutes cost. The steps call Makefile targets and scripts/, so each runs
+# the same locally.
 name: ci
 
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push stops the run of the one before.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   test:

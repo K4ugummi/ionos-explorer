@@ -33,7 +33,8 @@ make test          # Go vet and tests, UI lint, tests and build
 make test-race vuln check
 ```
 
-CI runs these and more (the image, the deployment files, browser checks
+CI runs on pushes to `main` only, not on pull requests, so run these
+yourself. It runs more (the image, the deployment files, browser checks
 with Compose and kind); see `.github/workflows/`.
 
 An encrypted demo snapshot, to test opening `.ionx.age` files:

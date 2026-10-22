@@ -1125,8 +1125,8 @@ commit SHA, tools by version (`go run pkg@version`), images by digest;
 every job gets read access only, plus what it needs. Values from the event
 reach `run:` steps as environment variables, never pasted into the script.
 
-- **`ci.yaml`** (push to main, pull requests): `make test`, `test-race`,
-  `vuln` (govulncheck with the module's toolchain, `npm audit --omit=dev`);
+- **`ci.yaml`** (push to main, by hand; not on pull requests, to save
+  runner minutes): `make test`, `test-race`, `vuln` (govulncheck with the module's toolchain, `npm audit --omit=dev`);
   `scripts/check-repo.sh` (no `*.ionx`, `*.age`, `*.token`, `.env` but the
   demo fixtures and `.env.example`), gitleaks over the whole history
   (false positives by fingerprint in `.gitleaksignore`), actionlint;
@@ -1135,8 +1135,7 @@ reach `run:` steps as environment variables, never pasted into the script.
   `scripts/check-context.sh` (planted snapshots and credentials stay out of
   the build context), the image for amd64 and arm64, and
   `scripts/smoke-image.sh` on the amd64 one.
-- **`e2e.yaml`** (main, pull requests that touch the code or `deploy/`,
-  weekly, by hand): `e2e/compose.sh` and `e2e/kind.sh`, the browser check
+- **`e2e.yaml`** (push to main, weekly, by hand): `e2e/compose.sh` and `e2e/kind.sh`, the browser check
   of `e2e/hosted.mjs` (Playwright) against the dev setups with the fake
   API: first admin by the setup link, fetch, logout, restart, login,
   fetch. No request may go to another origin, no console error. Screenshots

@@ -1,21 +1,13 @@
 # Browser checks of the deployment files with the fake IONOS API (synthetic
 # data, no IONOS account): Docker Compose and Kubernetes (kind). Each sets up
 # the first admin, fetches, logs out, restarts the explorer and logs in
-# again. On failure the screenshots and logs are uploaded.
+# again. On failure the screenshots and logs are uploaded. Pushes to main
+# only, no pull requests (Dependabot's included): runner minutes cost.
 name: e2e
 
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - deploy/**
-      - e2e/**
-      - exporter/**
-      - explorer/**
-      - .github/workflows/e2e.yaml
   schedule:
     - cron: "17 4 * * 1" # Mondays: new base images and dependencies
   workflow_dispatch:
