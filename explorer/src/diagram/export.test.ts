@@ -10,6 +10,7 @@ import { contractDiagram, datacenterDiagram, focusDiagram, pathDiagram } from '.
 import {
   drawnEdges,
   exportDrawio,
+  exportDrawioPages,
   exportFileName,
   exportSvg,
   fitText,
@@ -136,6 +137,29 @@ describe('export', async () => {
     expect(xml('<&>"\'')).toBe('&lt;&amp;&gt;&quot;&apos;')
     expect(xml('a\u0000b\u001Fc\uFFFEd\uD800e\u0009\u000A')).toBe('a\uFFFDb\uFFFDc\uFFFDd\uFFFDe\u0009\u000A')
     expect(xml('🙂')).toBe('🙂')
+  })
+
+  it('leaves the background out when asked, for a transparent PNG', () => {
+    const full = exportSvg(coreLayout, info()).svg
+    const clear = exportSvg(coreLayout, info(), { transparent: true }).svg
+    expect(full).toContain(`fill="${TOKENS.bg}"/>`)
+    expect(clear).not.toMatch(new RegExp(`<rect width="\\d+" height="\\d+" fill="${TOKENS.bg}"/>`))
+    expect(clear.length).toBeLessThan(full.length)
+  })
+
+  it('writes several views into one draw.io file, a page each', () => {
+    const one = exportDrawio(coreLayout, info('fra-prod-core'))
+    const both = exportDrawioPages([
+      { layout: contract, info: info() },
+      { layout: coreLayout, info: info('fra-prod-core') },
+    ])
+    const pages = parseXml(both).children.filter((c) => c.name === 'diagram')
+    expect(pages.map((p) => [p.attrs.id, p.attrs.name])).toEqual([
+      ['ionos-explorer', 'All datacenters'],
+      ['ionos-explorer-2', 'fra-prod-core'],
+    ])
+    // A single view is the same file as before.
+    expect(exportDrawioPages([{ layout: coreLayout, info: info('fra-prod-core') }])).toBe(one)
   })
 
   it('writes draw.io with one vertex per box, one edge per line and groups as containers', () => {

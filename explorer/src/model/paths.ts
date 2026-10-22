@@ -18,6 +18,11 @@ export const NETWORK_KINDS: ReadonlySet<NodeKind> = new Set([
   'alb',
   'nodepool',
   'postgres',
+  'mariadb',
+  'mongodb',
+  'inmemorydb',
+  'kafka',
+  'nfs',
   'external',
 ])
 
@@ -417,6 +422,30 @@ export function describePath(model: Model, path: Path): string[] {
     if (y.kind === 'external') return `through ${y.name} (outside the contract)`
     return `through ${KINDS[y.kind].label} ${y.name}`
   }
+}
+
+/**
+ * The routes in plain text, to paste into a ticket or a chat: a heading,
+ * then per route each resource on its own line with the step to the next
+ * one indented below it.
+ */
+export function pathsText(model: Model, from: string, to: string, paths: Path[]): string {
+  const name = (id: string) => model.nodes.get(id)?.name ?? id
+  const head = `Path: ${name(from)} → ${name(to)}`
+  if (!paths.length) return `${head}\nNo route found in this snapshot.\n`
+  const out = [head]
+  paths.forEach((p, i) => {
+    const steps = describePath(model, p)
+    const hops = p.edges.length === 1 ? '1 hop' : `${p.edges.length} hops`
+    const warn = p.plain.length ? `, through ${p.plain.map(name).join(', ')} only if it forwards traffic` : ''
+    out.push('', `${paths.length > 1 ? `Route ${i + 1}` : 'Route'} (${hops}${warn})`)
+    p.nodes.forEach((id, j) => {
+      const n = model.nodes.get(id)
+      out.push(`${j + 1}. ${name(id)}${n ? ` (${nodeLine(model, n)})` : ''}`)
+      if (j < steps.length) out.push(`   ↓ ${steps[j]}`)
+    })
+  })
+  return out.join('\n') + '\n'
 }
 
 /** One line on what a node is, for lists of steps: "Cube server · fra-prod-core". */

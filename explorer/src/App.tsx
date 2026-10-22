@@ -169,8 +169,11 @@ function Explorer({
   const selected = model.nodes.get(params.get('node') ?? '')
   const shown = selected && selected.id !== model.rootId ? selected : undefined
   // Focus or path view on top of the contract or datacenter view (whose `dc` stays, to go back to).
-  const [focus, path, hops] = [params.get('focus'), params.get('path'), params.get('hops')]
-  const mode = useMemo(() => (view === 'diagram' ? parseMode({ focus, path, hops }, model) : undefined), [view, focus, path, hops, model])
+  const [focus, path, hops, route] = [params.get('focus'), params.get('path'), params.get('hops'), params.get('route')]
+  const mode = useMemo(
+    () => (view === 'diagram' ? parseMode({ focus, path, hops, route }, model) : undefined),
+    [view, focus, path, hops, route, model],
+  )
   const pathMode = mode?.kind === 'path' ? mode : undefined
 
   const deferredQuery = useDeferredValue(query)
@@ -319,7 +322,9 @@ function Explorer({
                         from={pathMode.from}
                         to={pathMode.to}
                         onSelect={select}
-                        onReverse={() => enter({ ...pathMode, from: pathMode.to, to: pathMode.from })}
+                        route={pathMode.route}
+                        onRoute={(r) => update(modeParams({ ...pathMode, route: r }), false)}
+                        onReverse={() => enter({ ...pathMode, from: pathMode.to, to: pathMode.from, route: undefined })}
                       />
                     </aside>
                   )

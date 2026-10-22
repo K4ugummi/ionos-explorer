@@ -91,7 +91,7 @@ describe('buildModel robustness', () => {
     const files = new Map<string, unknown>([
       ['raw/cloudapi-v6/datacenters.json', { items: [{ id: 'dc1', properties: { name: 'only-dc', location: 'de/fra' } }] }],
       ['raw/cloudapi-v6/datacenters/dc1/lans.json', { items: [{ id: '1', properties: { name: 'l', pcc: 'pcc-x' } }] }],
-      ['raw/dns-v1/zones.json', { items: [{ id: 'z1', properties: { zoneName: 'example.com', name: 'my-zone' } }] }],
+      ['raw/apigateway-v1/gateways.json', { items: [{ id: 'z1', properties: { name: 'my-gateway' } }] }],
       ['raw/cloudapi-v6/weird.json', 'not a collection'],
     ])
     const cov = (api: string, endpoint: string, path: string, file: string) => ({ api, endpoint, path, file, status: 'ok' as const })
@@ -101,14 +101,14 @@ describe('buildModel robustness', () => {
         coverage: [
           cov('cloudapi-v6', '/datacenters', '/datacenters', 'raw/cloudapi-v6/datacenters.json'),
           cov('cloudapi-v6', '/datacenters/{datacenterId}/lans', '/datacenters/dc1/lans', 'raw/cloudapi-v6/datacenters/dc1/lans.json'),
-          cov('dns-v1', '/zones', '/zones', 'raw/dns-v1/zones.json'),
+          cov('apigateway-v1', '/gateways', '/gateways', 'raw/apigateway-v1/gateways.json'),
           cov('cloudapi-v6', '/weird', '/weird', 'raw/cloudapi-v6/weird.json'),
           { api: 'cloudapi-v6', endpoint: '/pccs', path: '/pccs', status: 'forbidden' },
         ],
       },
       files,
     })
-    expect(byName(m, 'my-zone').kind).toBe('other')
+    expect(byName(m, 'my-gateway').kind).toBe('other')
     expect(m.nodes.get('pcc-x')?.placeholder).toBe(true)
     expect(m.edges.some((e) => e.kind === 'cross-connect' && e.to === 'pcc-x')).toBe(true)
     expect(m.coverageIssues).toHaveLength(1)

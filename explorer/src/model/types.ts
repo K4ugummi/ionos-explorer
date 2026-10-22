@@ -18,6 +18,21 @@ export type NodeKind =
   | 'k8s'
   | 'nodepool'
   | 'postgres'
+  | 'mariadb'
+  | 'mongodb'
+  | 'inmemorydb'
+  | 'kafka'
+  | 'nfs'
+  | 'nfsshare'
+  | 'autoscaling'
+  | 'dnszone'
+  | 'dnsrecord'
+  | 'cdn'
+  | 'certificate'
+  | 'registry'
+  | 'pipeline'
+  | 'backupunit'
+  | 'snapshot'
   | 'vpngateway'
   | 'vpntunnel'
   | 'external' // outside the contract: a VPN remote host, or a site the user added
@@ -59,6 +74,12 @@ export interface GraphNode {
   changeCounts?: { added: number; removed: number; changed: number }
   /** Servers that look like network appliances, and why (see appliances.ts). */
   appliance?: Appliance
+  /**
+   * What the search finds with `is:<flag>`: `expiring` and `expired`
+   * (certificates, by the snapshot's date), `dangling` (DNS records naming
+   * an IP or host that is not in the contract).
+   */
+  flags?: string[]
   raw: unknown
 }
 
@@ -84,6 +105,10 @@ export type EdgeKind =
   | 'tunnel' // VPN tunnel / WireGuard peer → the resource or external host at its far end
   | 'manual' // a link the user added (annotations, not from the API)
   | 'secured-by' // server or NIC → Security Group
+  | 'resolves-to' // DNS record → the resource with its IP, or the record or service its name points to
+  | 'uses-certificate' // CDN distribution or application load balancer → certificate
+  | 'upstream' // CDN distribution → its origin (a resource or a DNS record)
+  | 'manages' // auto scaling group → the servers it created
 
 export interface GraphEdge {
   kind: EdgeKind

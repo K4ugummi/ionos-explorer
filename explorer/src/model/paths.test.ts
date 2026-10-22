@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { applyAnnotations, parse } from '../annotations/annotations'
 import { fixtureModel } from '../test/fixture'
-import { describePath, findPaths, neighbourhood, networkGraph, networkNode, PLAIN_SERVER_COST, type Path } from './paths'
+import { describePath, findPaths, neighbourhood, networkGraph, networkNode, pathsText, PLAIN_SERVER_COST, type Path } from './paths'
 import type { Model } from './types'
 
 const demoLinks = parse(readFileSync(new URL('../../../fixtures/demo-annotations.json', import.meta.url), 'utf8')).annotations
@@ -90,6 +90,20 @@ describe('neighbourhood', async () => {
 describe('paths', async () => {
   const raw = await fixtureModel()
   const m = applyAnnotations(raw, demoLinks).model
+
+  it('writes the routes as plain text', () => {
+    const [a, b] = [id(m, 'fra-core-web-01'), id(m, 'pg-orders-prod')]
+    const paths = findPaths(m, a, b)
+    const text = pathsText(m, a, b, paths)
+    const lines = text.trimEnd().split('\n')
+    expect(lines[0]).toBe('Path: fra-core-web-01 → pg-orders-prod')
+    expect(lines.filter((l) => /^Route( \d+)? \(\d+ hops?/.test(l))).toHaveLength(paths.length)
+    // Each resource numbered, each step below it.
+    expect(lines.filter((l) => /^\d+\. /.test(l))).toHaveLength(paths.reduce((n, p) => n + p.nodes.length, 0))
+    expect(lines.filter((l) => l.startsWith('   ↓ '))).toHaveLength(paths.reduce((n, p) => n + p.edges.length, 0))
+    expect(text).toContain(`   ↓ ${describePath(m, paths[0])[0]}`)
+    expect(pathsText(m, a, b, [])).toBe('Path: fra-core-web-01 → pg-orders-prod\nNo route found in this snapshot.\n')
+  })
 
   it('leads a web server in fra-prod-core to the database in fra-prod-data through a Cross Connect', () => {
     const paths = findPaths(m, id(m, 'fra-core-web-01'), id(m, 'pg-orders-prod'))

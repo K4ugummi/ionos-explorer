@@ -4,16 +4,20 @@ import type { Model } from '../model/types'
 /**
  * A diagram mode on top of the contract or datacenter view: what one
  * resource is connected to (`focus=<id>`), or how one reaches another
- * (`path=<from>,<to>`), with `hops` (1–3) for how far a focus looks. The
- * `dc` in the hash stays: it is the view to go back to.
+ * (`path=<from>,<to>`), with `hops` (1–3) for how far a focus looks and,
+ * in a path view, the `route` (1, 2, …) picked in the step list to light
+ * up on the canvas. The `dc` in the hash stays: it is the view to go back to.
  */
-export type DiagramMode = { kind: 'focus'; id: string; hops: number } | { kind: 'path'; from: string; to: string; hops: number }
+export type DiagramMode =
+  | { kind: 'focus'; id: string; hops: number }
+  | { kind: 'path'; from: string; to: string; hops: number; route?: number }
 
 /** The hash entries of a mode, as read. */
 export interface ModeParams {
   focus?: string | null
   path?: string | null
   hops?: string | null
+  route?: string | null
 }
 
 /** The mode in the hash, if it names resources of the network (see `networkNode`). */
@@ -22,7 +26,10 @@ export function parseMode(params: ModeParams, model: Model): DiagramMode | undef
   const hops = n >= 1 && n <= MAX_HOPS ? n : DEFAULT_HOPS
   const [from, to, ...rest] = (params.path ?? '').split(',')
   const [a, b] = [from && networkNode(model, from), to && networkNode(model, to)]
-  if (a && b && a !== b && !rest.length) return { kind: 'path', from, to, hops }
+  if (a && b && a !== b && !rest.length) {
+    const r = Number(params.route)
+    return { kind: 'path', from, to, hops, ...(Number.isInteger(r) && r >= 1 ? { route: r } : {}) }
+  }
   const focus = params.focus
   if (focus && networkNode(model, focus)) return { kind: 'focus', id: focus, hops }
   return undefined
@@ -34,10 +41,11 @@ export function modeParams(mode?: DiagramMode): Record<string, string | undefine
     focus: mode?.kind === 'focus' ? mode.id : undefined,
     path: mode?.kind === 'path' ? `${mode.from},${mode.to}` : undefined,
     hops: mode && mode.hops !== DEFAULT_HOPS ? String(mode.hops) : undefined,
+    route: mode?.kind === 'path' && mode.route ? String(mode.route) : undefined,
   }
 }
 
-/** Layouts and opened groups are kept per view; this names a mode's view. */
+/** Layouts and opened groups are kept per view; this names a mode's view (the route lit up is not part of it). */
 export function modeKey(mode: DiagramMode) {
   return mode.kind === 'focus' ? `focus:${mode.id}:${mode.hops}` : `path:${mode.from},${mode.to}:${mode.hops}`
 }

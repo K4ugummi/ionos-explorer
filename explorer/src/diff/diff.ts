@@ -40,7 +40,8 @@ export interface Diff {
 }
 
 /** Facts that change without anything worth reporting. */
-const IGNORED_FACTS = new Set(['Created', 'Modified', 'State', 'Version'])
+// Expires: relative to each snapshot's own date (certificates).
+const IGNORED_FACTS = new Set(['Created', 'Modified', 'State', 'Version', 'Expires'])
 
 export function compareModels(older: Model, newer: Model): Diff {
   const changes: Change[] = []
@@ -135,6 +136,10 @@ const EDGE_TEXT: Record<GraphEdge['kind'], string> = {
   tunnel: 'tunnel to',
   manual: 'manual link to',
   'secured-by': 'secured by',
+  'resolves-to': 'points to',
+  'uses-certificate': 'uses certificate',
+  upstream: 'serves from',
+  manages: 'created',
 }
 
 /**

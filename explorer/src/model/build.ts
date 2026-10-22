@@ -1,6 +1,6 @@
 import type { Coverage, Snapshot } from '../snapshot/types'
 import { detectAppliances } from './appliances'
-import { KINDS, subtypeLabel } from './kinds'
+import { KINDS, LAN_SERVICES, subtypeLabel } from './kinds'
 import { arr, entityItems, isObj, items, num, obj, props, str, strs, type Obj } from './raw'
 import type { CoverageIssue, EdgeKind, Fact, GraphEdge, GraphNode, Model } from './types'
 
@@ -37,6 +37,17 @@ class Builder {
   private publicIPs = new Map<string, string>()
   /** LAN → Cross Connect references, resolved after /pccs is processed. */
   private pendingPCC: { lan: string; pcc: string }[] = []
+  /** Host names services answer at (registries, databases, CDN domains) → node id, for DNS names pointing at them. */
+  private hosts = new Map<string, string>()
+  /** DNS address records (A, AAAA, CNAME, ALIAS) by name, and what records point at, linked once every resource is known. */
+  private fqdns = new Map<string, string[]>()
+  private dnsLinks: { id: string; type: string; target: string }[] = []
+  /** Zone names, to tell a record pointing into the contract's own zones from one pointing elsewhere. */
+  private zoneNames: string[] = []
+  /** CDN distributions' certificates and origins, linked after the certificates and DNS records. */
+  private cdnLinks: { id: string; cert?: string; origins: string[] }[] = []
+  /** Every IP → the resource that has it, built when first needed (after all resources with IPs). */
+  private ipIndex?: Map<string, string>
   private snapshot: Snapshot
 
   constructor(snapshot: Snapshot) {
@@ -90,6 +101,31 @@ class Builder {
     this.each('cloudapi /k8s', (d) => items(d.doc).forEach((c) => this.k8s(c)))
     this.each('cloudapi /k8s/{k8sClusterId}/nodepools', (d) => items(d.doc).forEach((np) => this.nodePool(np, d.params.k8sClusterId)))
     this.each('postgresql /clusters', (d) => items(d.doc).forEach((c) => this.postgres(c, d.cov.api)))
+    this.each('mariadb /clusters', (d) => items(d.doc).forEach((c) => this.database(c, d.cov.api, 'mariadb')))
+    this.each('inmemorydb /clusters', (d) => items(d.doc).forEach((c) => this.database(c, d.cov.api, 'inmemorydb')))
+    this.each('mongodb /clusters', (d) => items(d.doc).forEach((c) => this.database(c, d.cov.api, 'mongodb')))
+    this.each('kafka /clusters', (d) => items(d.doc).forEach((c) => this.kafka(c, d.cov.api)))
+    this.each('kafka /clusters/{clusterId}/topics', (d) => this.kafkaTopics(d.params.clusterId, items(d.doc)))
+    this.each('nfs /clusters', (d) => items(d.doc).forEach((c) => this.nfs(c, d.cov.api)))
+    this.each('nfs /clusters/{clusterId}/shares', (d) => items(d.doc).forEach((x) => this.nfsShare(x, d.params.clusterId)))
+    this.each('autoscaling /groups', (d) => items(d.doc).forEach((g) => this.autoscaling(g)))
+    this.each('autoscaling /groups/{groupId}/servers', (d) => this.autoscalingServers(d.params.groupId, items(d.doc)))
+    this.each('cloudapi /backupunits', (d) => items(d.doc).forEach((b) => this.backupUnit(b)))
+    this.each('cloudapi /snapshots', (d) => items(d.doc).forEach((x) => this.volumeSnapshot(x)))
+    this.each('containerregistry /registries', (d) => items(d.doc).forEach((r) => this.registry(r)))
+    this.each('containerregistry /registries/{registryId}/repositories', (d) => this.repositories(d.params.registryId, items(d.doc)))
+    this.each('logging /pipelines', (d) => items(d.doc).forEach((x) => this.pipeline(x, d.cov.api, 'Logging')))
+    this.each('monitoring /pipelines', (d) => items(d.doc).forEach((x) => this.pipeline(x, d.cov.api, 'Monitoring')))
+    this.each('certmanager /certificates', (d) => items(d.doc).forEach((c) => this.certificate(c)))
+    this.each('certmanager /auto-certificates', (d) => items(d.doc).forEach((c) => this.autoCertificate(c)))
+    // The CDN before DNS records (its IPs are what they point at), its links after them.
+    this.each('cdn /distributions', (d) => items(d.doc).forEach((x) => this.cdn(x)))
+    this.each('dns /zones', (d) => items(d.doc).forEach((z) => this.zone(z, false)))
+    this.each('dns /secondaryzones', (d) => items(d.doc).forEach((z) => this.zone(z, true)))
+    this.each('dns /records', (d) => items(d.doc).forEach((r) => this.record(r)))
+    this.each('dns /reverserecords', (d) => items(d.doc).forEach((r) => this.reverseRecord(r)))
+    this.linkDNS()
+    this.linkCertificatesAndOrigins()
     this.each('cloudapi /labels', (d) => items(d.doc).forEach((l) => this.label(l)))
     for (const list of this.docs.values()) list.forEach((d) => this.generic(d))
     return this.finish()
@@ -738,6 +774,623 @@ class Builder {
     }
   }
 
+  // --- more managed services ------------------------------------------------------
+
+  private region(api: string) {
+    return this.snapshot.manifest.apis.find((a) => a.id === api)?.region
+  }
+
+  /** "fra-prod-data / db (10.7.3.4/24)"; several joined by "; ". */
+  private connectionsFact(conns: Obj[], addrs: (x: Obj) => string[]) {
+    return conns
+      .map((x) => {
+        const dc = str(x.datacenterId) ?? ''
+        const a = addrs(x).join(', ')
+        return `${this.dcNode(dc)?.name ?? dc} / ${this.lanName(dc, x.lanId ?? x.lan)}${a ? ` (${a})` : ''}`
+      })
+      .join('; ')
+  }
+
+  /** A `connection` edge to each LAN; LAN ids are `lanId`, or `lan` (Network File Storage). */
+  private connect(id: string, conns: Obj[], addrs: (x: Obj) => string[]) {
+    for (const x of conns) {
+      const dc = str(x.datacenterId)
+      if (dc) this.edge('connection', id, this.lanId(dc, x.lanId ?? x.lan), addrs(x).join(', ') || undefined)
+    }
+  }
+
+  /**
+   * MariaDB and In-Memory DB (v2: one `connection`, sizes in GB per
+   * instance) and MongoDB (`connections` with a CIDR list, sizes in MB).
+   */
+  private database(c: Obj, api: string, kind: 'mariadb' | 'inmemorydb' | 'mongodb') {
+    const id = str(c.id)
+    if (!id) return
+    const p = props(c)
+    const meta = obj(c.metadata)
+    const inst = obj(p.instances)
+    const conns = (isObj(p.connection) ? [p.connection] : arr(p.connections)).map(obj)
+    const addrs = (x: Obj) => (str(x.primaryInstanceAddress) ? [str(x.primaryInstanceAddress)!] : strs(x.cidrList))
+    const dcId = str(conns[0]?.datacenterId)
+    const region = this.region(api)
+    const product = LAN_SERVICES.get(kind)!
+    const host = str(meta.dnsName) ?? hostOf(str(p.connectionString))
+    const size = (v: unknown) => (kind === 'mongodb' ? gb(v) : unit(v, 'GB'))
+    const backup = isObj(p.snapshot) ? obj(p.snapshot) : obj(p.backup)
+    const creds = obj(p.credentials)
+    this.add({
+      id,
+      kind,
+      name: str(p.name) || str(p.displayName) || id,
+      parentId: ROOT_ID,
+      dcId,
+      location: str(p.location) ?? this.dcNode(dcId)?.location ?? region?.replace('-', '/'),
+      state: state(c),
+      ips: conns.flatMap(addrs).map(stripCidr),
+      facts: compact([
+        fact(product, str(p.version) ?? str(p.mongoDBVersion)),
+        fact('Description', str(p.description)),
+        fact('Status', str(meta.statusMessage)),
+        fact('Health', str(meta.health)),
+        fact('Type', str(p.type)),
+        fact('Edition', str(p.edition)),
+        fact('Instances', str(inst.count) ?? str(p.instances)),
+        fact('Shards', num(p.shards) ? str(p.shards) : undefined),
+        fact('Cores', str(inst.cores) ?? str(p.cores)),
+        fact('RAM', size(inst.ram ?? p.ram)),
+        fact('Storage', size(inst.storageSize ?? p.storageSize)),
+        fact('Persistence', str(p.persistenceMode)),
+        fact('Eviction', str(p.evictionPolicy)),
+        fact('Host', host),
+        fact('Connection string', str(p.connectionString)),
+        fact('Database', str(creds.database)),
+        fact('User', str(creds.username)),
+        fact('Connections', this.connectionsFact(conns, addrs)),
+        fact(
+          kind === 'inmemorydb' ? 'Snapshots' : 'Backups',
+          str(backup.location) && `${str(backup.location)}${num(backup.retentionDays) ? `, kept ${num(backup.retentionDays)} days` : ''}`,
+        ),
+        fact('Maintenance', maintenance(p.maintenanceWindow)),
+        ...metaFacts(c),
+      ]),
+      terms: compact([host, str(p.description), str(p.connectionString)]),
+      raw: c,
+    })
+    this.connect(id, conns, addrs)
+    if (host) this.hosts.set(host, id)
+  }
+
+  private kafka(c: Obj, api: string) {
+    const id = str(c.id)
+    if (!id) return
+    const p = props(c)
+    const meta = obj(c.metadata)
+    const conns = arr(p.connections).map(obj)
+    const addrs = (x: Obj) => strs(x.brokerAddresses)
+    const dcId = str(conns[0]?.datacenterId)
+    this.add({
+      id,
+      kind: 'kafka',
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      dcId,
+      location: this.dcNode(dcId)?.location ?? this.region(api)?.replace('-', '/'),
+      state: state(c),
+      ips: conns.flatMap(addrs).map(stripCidr),
+      facts: compact([
+        fact('Kafka', str(p.version)),
+        fact('Size', str(p.size)),
+        fact('Status', str(meta.message)),
+        fact('Brokers', strs(meta.brokerAddresses).join(', ')),
+        fact('Connections', this.connectionsFact(conns, addrs)),
+        ...metaFacts(c),
+      ]),
+      raw: c,
+    })
+    this.connect(id, conns, addrs)
+  }
+
+  /** Topics are listed in the cluster's facts and found by its search, not drawn. */
+  private kafkaTopics(clusterId: string, topics: Obj[]) {
+    const n = this.nodes.get(clusterId)
+    if (!n || !topics.length) return
+    const describe = (t: Obj) => {
+      const p = props(t)
+      const ms = num(obj(p.logRetention).retentionTime)
+      const kept = ms === undefined ? '' : ms < 0 ? ', kept forever' : `, kept ${duration(ms)}`
+      return `${str(p.name) ?? '?'} (${str(p.numberOfPartitions) ?? '?'} partitions × ${str(p.replicationFactor) ?? '?'}${kept})`
+    }
+    insertFact(n, fact(`Topics (${topics.length})`, topics.map(describe).join(', ')))
+    n.terms.push(...topics.flatMap((t) => str(props(t).name) ?? []))
+  }
+
+  private nfs(c: Obj, api: string) {
+    const id = str(c.id)
+    if (!id) return
+    const p = props(c)
+    const meta = obj(c.metadata)
+    const conns = arr(p.connections).map(obj)
+    const addrs = (x: Obj) => (str(x.ipAddress) ? [str(x.ipAddress)!] : [])
+    const dcId = str(conns[0]?.datacenterId)
+    this.add({
+      id,
+      kind: 'nfs',
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      dcId,
+      location: this.dcNode(dcId)?.location ?? this.region(api)?.replace('-', '/'),
+      state: state(c),
+      ips: conns.flatMap(addrs).map(stripCidr),
+      facts: compact([
+        fact('NFS', str(obj(p.nfs).minVersion)),
+        fact('Size', str(p.size) && `${str(p.size)} ${str(p.sizeUnit) ?? ''}`.trim()),
+        fact('Used', bytes(meta.used)),
+        fact('Status', str(meta.statusMessage)),
+        fact('Connections', this.connectionsFact(conns, addrs)),
+        ...metaFacts(c),
+      ]),
+      raw: c,
+    })
+    this.connect(id, conns, addrs)
+  }
+
+  private nfsShare(sh: Obj, clusterId: string) {
+    const id = str(sh.id)
+    if (!id) return
+    const p = props(sh)
+    const meta = obj(sh.metadata)
+    const cluster = this.nodes.get(clusterId)
+    const groups = arr(p.clientGroups).map(obj)
+    const quota = num(p.quota)
+    const clients = groups
+      .map((g) => {
+        const who = [...strs(g.ipNetworks), ...strs(g.hosts)].join(', ') || 'nobody'
+        const squash = str(obj(g.nfs).squash)
+        return `${str(g.description) ? `${str(g.description)}: ` : ''}${who}${squash ? ` (squash ${squash})` : ''}`
+      })
+      .join('; ')
+    this.add({
+      id,
+      kind: 'nfsshare',
+      name: str(p.name) || id,
+      parentId: cluster ? clusterId : ROOT_ID,
+      dcId: cluster?.dcId,
+      location: cluster?.location,
+      state: state(sh),
+      facts: compact([
+        fact('Cluster', cluster?.name),
+        fact('Path', str(meta.nfsPath) && `${cluster?.ips[0] ? `${cluster.ips[0]}:` : ''}${str(meta.nfsPath)}`),
+        fact('Quota', quota === undefined ? undefined : quota === 0 ? 'unlimited' : gb(quota)),
+        fact('Used', bytes(meta.used)),
+        fact('Owner', p.uid !== undefined ? `uid ${str(p.uid)}, gid ${str(p.gid) ?? '?'}` : undefined),
+        fact('Clients', clients),
+        ...metaFacts(sh),
+      ]),
+      terms: groups.flatMap((g) => compact([str(g.description), ...strs(g.ipNetworks), ...strs(g.hosts)])),
+      raw: sh,
+    })
+  }
+
+  /** A VM Auto Scaling group: the template of the servers it creates, and the LANs they join. */
+  private autoscaling(g: Obj) {
+    const id = str(g.id)
+    if (!id) return
+    const p = props(g)
+    const dcId = str(obj(p.datacenter).id)
+    const dc = this.dcNode(dcId)
+    const rc = obj(p.replicaConfiguration)
+    const nics = arr(rc.nics).map(obj)
+    const policy = obj(p.policy)
+    this.add({
+      id,
+      kind: 'autoscaling',
+      name: str(p.name) || id,
+      parentId: dc ? dc.id : ROOT_ID,
+      dcId: dc?.id,
+      location: str(p.location) ?? dc?.location,
+      state: state(g),
+      facts: compact([
+        fact('Servers', p.minReplicaCount !== undefined ? `${str(p.minReplicaCount)} to ${str(p.maxReplicaCount) ?? '?'}` : undefined),
+        fact(
+          'Each server',
+          compact([unit(rc.cores, 'cores'), gb(rc.ram), str(rc.cpuFamily)]).join(', ') || undefined,
+        ),
+        fact('LANs', nics.map((n) => (dcId ? this.lanName(dcId, n.lan) : str(n.lan))).join(', ')),
+        fact(
+          'Scales',
+          str(policy.metric) &&
+            `on ${str(policy.metric)}: out above ${str(policy.scaleOutThreshold) ?? '?'}, in below ${str(policy.scaleInThreshold) ?? '?'}`,
+        ),
+        ...metaFacts(g),
+      ]),
+      raw: g,
+    })
+    if (dcId) for (const n of nics) this.edge('connection', id, this.lanId(dcId, n.lan), str(n.name))
+  }
+
+  private autoscalingServers(groupId: string, list: Obj[]) {
+    for (const x of list) this.edge('manages', groupId, str(obj(props(x).datacenterServer).id))
+  }
+
+  private backupUnit(b: Obj) {
+    const id = str(b.id)
+    if (!id) return
+    const p = props(b)
+    this.add({
+      id,
+      kind: 'backupunit',
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      state: state(b),
+      facts: compact([fact('Email', str(p.email)), ...metaFacts(b)]),
+      terms: compact([str(p.email)]),
+      raw: b,
+    })
+  }
+
+  private volumeSnapshot(x: Obj) {
+    const id = str(x.id)
+    if (!id) return
+    const p = props(x)
+    this.add({
+      id,
+      kind: 'snapshot',
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      location: str(p.location),
+      state: state(x),
+      facts: compact([
+        fact('Description', str(p.description)),
+        fact('Location', str(p.location)),
+        fact('Size', unit(p.size, 'GB')),
+        fact('Licence', str(p.licenceType)),
+        ...metaFacts(x),
+      ]),
+      terms: compact([str(p.description)]),
+      raw: x,
+    })
+  }
+
+  private registry(r: Obj) {
+    const id = str(r.id)
+    if (!id) return
+    const p = props(r)
+    const host = str(p.hostname)
+    const gc = obj(p.garbageCollectionSchedule)
+    const scanning = obj(obj(p.features).vulnerabilityScanning).enabled
+    this.add({
+      id,
+      kind: 'registry',
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      location: str(p.location),
+      state: state(r),
+      facts: compact([
+        fact('Host', host),
+        fact('Location', str(p.location)),
+        fact('Storage used', bytes(obj(p.storageUsage).bytes)),
+        fact('Garbage collection', strs(gc.days).length ? `${strs(gc.days).join(', ')} ${str(gc.time) ?? ''}`.trim() : undefined),
+        fact('Vulnerability scanning', typeof scanning === 'boolean' ? (scanning ? 'on' : 'off') : undefined),
+        fact('API allowed from', strs(p.apiSubnetAllowList).join(', ')),
+        ...metaFacts(r),
+      ]),
+      terms: compact([host]),
+      raw: r,
+    })
+    if (host) this.hosts.set(host, id)
+  }
+
+  /** Repositories are listed in the registry's facts and found by its search. */
+  private repositories(registryId: string, repos: Obj[]) {
+    const n = this.nodes.get(registryId)
+    if (!n || !repos.length) return
+    const describe = (x: Obj) => {
+      const m = obj(x.metadata)
+      const pushed = str(m.lastPushedAt)?.slice(0, 10)
+      const extra = compact([unit(m.artifactCount, 'artifacts'), pushed && `last push ${pushed}`, str(m.lastSeverity) && `worst finding ${str(m.lastSeverity)}`])
+      return `${str(props(x).name) ?? '?'}${extra.length ? ` (${extra.join(', ')})` : ''}`
+    }
+    insertFact(n, fact(`Repositories (${repos.length})`, repos.map(describe).join('; ')))
+    n.terms.push(...repos.flatMap((x) => str(props(x).name) ?? []))
+  }
+
+  /** Logging and Monitoring Service pipelines: where logs or metrics go in, and where to look at them. */
+  private pipeline(x: Obj, api: string, flavor: 'Logging' | 'Monitoring') {
+    const id = str(x.id)
+    if (!id) return
+    const p = props(x)
+    const meta = obj(x.metadata)
+    const region = this.region(api)
+    const logs = arr(p.logs).map(obj)
+    const endpoints = compact([str(p.httpAddress), str(p.tcpAddress), str(meta.httpEndpoint)])
+    const grafana = str(p.grafanaAddress) ?? str(meta.grafanaEndpoint)
+    this.add({
+      id,
+      kind: 'pipeline',
+      subtype: flavor,
+      name: str(p.name) || id,
+      parentId: ROOT_ID,
+      location: region?.replace('-', '/'),
+      state: state(x),
+      facts: compact([
+        fact('Service', `${flavor} Service${region ? ` in ${region}` : ''}`),
+        fact(
+          'Logs',
+          logs
+            .map((l) => {
+              const keep = arr(l.destinations)
+                .map(obj)
+                .map((d) => num(d.retentionInDays))
+                .find((n) => n !== undefined)
+              return `${str(l.source) ?? '?'}${str(l.tag) ? ` "${str(l.tag)}"` : ''} via ${str(l.protocol) ?? '?'}${keep ? `, kept ${keep} days` : ''}`
+            })
+            .join('; '),
+        ),
+        fact('Send to', endpoints.join(', ')),
+        fact('Grafana', grafana),
+        fact('Tier', str(p.resourceTier)),
+        fact('Status', str(meta.statusMessage)),
+        ...metaFacts(x),
+      ]),
+      terms: compact([...endpoints, grafana, ...logs.map((l) => str(l.tag))]),
+      raw: x,
+    })
+  }
+
+  /** Validity is judged by the snapshot's date: what was true when it was taken. */
+  private certificate(c: Obj) {
+    const id = str(c.id)
+    if (!id) return
+    const p = props(c)
+    const meta = obj(c.metadata)
+    const cn = str(meta.commonName)
+    const sans = strs(meta.subjectAlternativeNames)
+    const until = str(meta.notAfter)
+    const days = until ? daysBetween(this.snapshot.manifest.createdAt, until) : undefined
+    const expired = meta.expired === true || (days !== undefined && days <= 0)
+    const flags = expired ? ['expired', 'expiring'] : days !== undefined && days <= 30 ? ['expiring'] : undefined
+    // Relative to the snapshot, so not compared between snapshots (diff.ts).
+    const expires = days === undefined ? undefined : expired ? `expired ${-days} days before the snapshot` : `${days} days after the snapshot`
+    this.add({
+      id,
+      kind: 'certificate',
+      subtype: str(meta.autoCertificate) ? 'renewed automatically' : undefined,
+      name: str(p.name) || cn || id,
+      parentId: ROOT_ID,
+      state: expired ? 'EXPIRED' : state(c),
+      flags,
+      facts: compact([
+        fact('Common name', cn),
+        fact('Also valid for', sans.filter((x) => x !== cn).join(', ')),
+        fact('Valid from', str(meta.notBefore)?.slice(0, 10)),
+        fact('Valid until', until?.slice(0, 10)),
+        fact('Expires', expires),
+        fact('Serial', str(meta.serialNumber)),
+        fact('Status', str(meta.message)),
+        ...metaFacts(c),
+      ]),
+      terms: compact([cn, ...sans]),
+      raw: c,
+    })
+  }
+
+  /** Certificates renewed by ACME: the order, with the certificate it last issued. */
+  private autoCertificate(a: Obj) {
+    const id = str(a.id)
+    if (!id) return
+    const p = props(a)
+    const meta = obj(a.metadata)
+    const cn = str(p.commonName)
+    const issued = str(meta.lastIssuedCertificate)
+    this.add({
+      id,
+      kind: 'certificate',
+      subtype: 'auto-certificate',
+      name: str(p.name) || cn || id,
+      parentId: ROOT_ID,
+      state: state(a),
+      facts: compact([
+        fact('Common name', cn),
+        fact('Also valid for', strs(p.subjectAlternativeNames).filter((x) => x !== cn).join(', ')),
+        fact('Key', str(p.keyAlgorithm)),
+        fact('Current certificate', issued && (this.nodes.get(issued)?.name ?? issued)),
+        fact('Status', str(meta.message)),
+        ...metaFacts(a),
+      ]),
+      terms: compact([cn, ...strs(p.subjectAlternativeNames)]),
+      raw: a,
+    })
+  }
+
+  private cdn(x: Obj) {
+    const id = str(x.id)
+    if (!id) return
+    const p = props(x)
+    const meta = obj(x.metadata)
+    const domain = str(p.domain)
+    const rules = arr(p.routingRules).map(obj)
+    const origins = compact(rules.map((r) => str(obj(r.upstream).host)))
+    const ips = compact([str(meta.publicEndpointIpv4), str(meta.publicEndpointIpv6)])
+    this.add({
+      id,
+      kind: 'cdn',
+      name: domain || id,
+      parentId: ROOT_ID,
+      state: state(x),
+      ips,
+      facts: compact([
+        fact('Domain', domain),
+        fact('Public IPs', ips.join(', ')),
+        fact(
+          'Rules',
+          rules
+            .map((r) => {
+              const u = obj(r.upstream)
+              const extra = compact([u.caching === true ? 'cached' : undefined, u.waf === true ? 'WAF' : undefined, str(u.rateLimitClass) !== 'none' ? str(u.rateLimitClass) : undefined])
+              return `${str(r.scheme) ?? '?'} ${str(r.prefix) ?? '/'} → ${str(u.host) ?? '?'}${extra.length ? ` (${extra.join(', ')})` : ''}`
+            })
+            .join('; '),
+        ),
+        fact('Status', str(meta.message)),
+        ...metaFacts(x),
+      ]),
+      terms: compact([domain, ...origins]),
+      raw: x,
+    })
+    for (const ip of ips) this.publicIPs.set(ip, id)
+    if (domain) this.hosts.set(domain, id)
+    this.cdnLinks.push({ id, cert: str(p.certificateId), origins })
+  }
+
+  private zone(z: Obj, secondary: boolean) {
+    const id = str(z.id)
+    if (!id) return
+    const p = props(z)
+    const meta = obj(z.metadata)
+    const name = str(p.zoneName)
+    if (name) this.zoneNames.push(name.toLowerCase())
+    this.add({
+      id,
+      kind: 'dnszone',
+      subtype: secondary ? 'secondary' : undefined,
+      name: name || id,
+      parentId: ROOT_ID,
+      state: state(z),
+      facts: compact([
+        fact('Description', str(p.description)),
+        fact('Enabled', p.enabled === false ? 'no' : undefined),
+        fact('Primary name servers', strs(p.primaryIps).join(', ')),
+        fact('Name servers', strs(meta.nameservers).join(', ')),
+        ...metaFacts(z),
+      ]),
+      ips: strs(p.primaryIps),
+      terms: compact([str(p.description)]),
+      raw: z,
+    })
+  }
+
+  private record(r: Obj) {
+    const id = str(r.id)
+    if (!id) return
+    const p = props(r)
+    const meta = obj(r.metadata)
+    const zoneId = str(meta.zoneId)
+    const zone = zoneId ? this.nodes.get(zoneId) : undefined
+    const type = (str(p.type) ?? '').toUpperCase()
+    const content = str(p.content) ?? ''
+    const fqdn = (str(meta.fqdn) ?? [str(p.name), zone?.name].filter(Boolean).join('.')).replace(/\.$/, '').toLowerCase()
+    const address = type === 'A' || type === 'AAAA'
+    this.add({
+      id,
+      kind: 'dnsrecord',
+      subtype: type || undefined,
+      name: fqdn || id,
+      parentId: zone ? zone.id : ROOT_ID,
+      state: state(r),
+      ips: address && isIP(content) ? [content] : [],
+      facts: compact([
+        fact('Type', type),
+        fact(type === 'MX' || type === 'SRV' ? 'Points to' : 'Content', content),
+        fact('Priority', type === 'MX' || type === 'SRV' ? str(p.priority) : undefined),
+        fact('TTL', str(p.ttl) && `${str(p.ttl)} s`),
+        fact('Enabled', p.enabled === false ? 'no' : undefined),
+        fact('Zone', zone?.name),
+        ...metaFacts(r),
+      ]),
+      terms: compact([content]),
+      raw: r,
+    })
+    // What a name pointing at this one reaches: its address records, not its mail or text records.
+    if (fqdn && (address || type === 'CNAME' || type === 'ALIAS')) this.fqdns.set(fqdn, [...(this.fqdns.get(fqdn) ?? []), id])
+    // The host a record names: the last word (SRV: "weight port host").
+    const target = address ? content : ['CNAME', 'ALIAS', 'MX', 'NS', 'SRV', 'HTTPS', 'SVCB'].includes(type) ? content.split(/\s+/).pop() : undefined
+    if (target) this.dnsLinks.push({ id, type: address ? 'ip' : 'host', target: target.replace(/\.$/, '').toLowerCase() })
+  }
+
+  private reverseRecord(r: Obj) {
+    const id = str(r.id)
+    if (!id) return
+    const p = props(r)
+    const ip = str(p.ip)
+    const name = str(p.name)?.replace(/\.$/, '').toLowerCase()
+    this.add({
+      id,
+      kind: 'dnsrecord',
+      subtype: 'PTR',
+      name: name || ip || id,
+      parentId: ROOT_ID,
+      state: state(r),
+      ips: ip ? [ip] : [],
+      facts: compact([fact('Type', 'PTR (reverse DNS)'), fact('IP', ip), fact('Name', name), fact('Description', str(p.description)), ...metaFacts(r)]),
+      terms: compact([str(p.description)]),
+      raw: r,
+    })
+    if (ip) this.dnsLinks.push({ id, type: 'ip', target: ip })
+  }
+
+  /** The resource an IP belongs to: a server rather than its NIC; not DNS records or IP blocks, which only name it. */
+  private ipOwner(ip: string): string | undefined {
+    if (!this.ipIndex) {
+      this.ipIndex = new Map()
+      for (const n of this.nodes.values()) {
+        if (n.kind === 'dnsrecord' || n.kind === 'ipblock' || n.kind === 'dnszone' || n.placeholder) continue
+        const owner = n.kind === 'nic' && n.parentId && this.nodes.get(n.parentId)?.kind === 'server' ? n.parentId : n.id
+        for (const x of n.ips) if (!this.ipIndex.has(x) || n.kind !== 'nic') this.ipIndex.set(x, owner)
+      }
+    }
+    const pub = this.publicIPs.get(ip)
+    const p = pub ? this.nodes.get(pub) : undefined
+    if (p) return p.kind === 'nic' && p.parentId ? p.parentId : p.id
+    return this.ipIndex.get(ip)
+  }
+
+  /**
+   * DNS records to what they name: an IP to the resource that has it (the
+   * name becomes a search term of it too), a host to the records of that
+   * name or the service answering there. A record naming an IP not in the
+   * contract, or a host in one of its zones that nothing answers, dangles.
+   */
+  private linkDNS() {
+    for (const l of this.dnsLinks) {
+      const rec = this.nodes.get(l.id)!
+      const targets = l.type === 'ip' ? compact([this.ipOwner(l.target)]) : this.hostTargets(l.target)
+      for (const t of targets) {
+        this.edge('resolves-to', l.id, t, l.target)
+        const n = this.nodes.get(t)
+        if (n && n.kind !== 'dnsrecord') n.terms.push(rec.name)
+      }
+      const ours = l.type === 'ip' || this.zoneNames.some((z) => l.target === z || l.target.endsWith(`.${z}`))
+      if (!targets.length && ours) {
+        rec.flags = ['dangling']
+        insertFact(rec, fact('Note', l.type === 'ip' ? 'No resource in this snapshot has this IP' : 'Nothing in this snapshot answers at this name'))
+      }
+    }
+  }
+
+  private hostTargets(host: string): string[] {
+    const service = this.hosts.get(host)
+    return service ? [service] : (this.fqdns.get(host) ?? [])
+  }
+
+  /** CDN distributions to their certificate and origins; application load balancers to theirs. */
+  private linkCertificatesAndOrigins() {
+    for (const c of this.cdnLinks) {
+      if (c.cert && this.nodes.get(c.cert)?.kind === 'certificate') this.edge('uses-certificate', c.id, c.cert)
+      for (const o of c.origins) {
+        const host = o.toLowerCase()
+        for (const t of isIP(host) ? compact([this.ipOwner(host)]) : this.hostTargets(host)) this.edge('upstream', c.id, t, o)
+      }
+    }
+    for (const n of this.nodes.values()) {
+      if (n.kind !== 'alb') continue
+      for (const rule of entityItems(obj(n.raw), 'forwardingrules')) {
+        for (const cert of strs(props(rule).serverCertificates)) {
+          if (this.nodes.get(cert)?.kind === 'certificate') this.edge('uses-certificate', n.id, cert, str(props(rule).name))
+        }
+      }
+    }
+  }
+
   private vpnGateway(g: Obj, flavor: 'IPsec' | 'WireGuard', api: string) {
     const id = str(g.id)
     if (!id) return
@@ -969,7 +1622,7 @@ export function indexChildren(nodes: Iterable<GraphNode>): Map<string, string[]>
 
 // --- helpers -----------------------------------------------------------------------
 
-/** "cloudapi-v6" → "cloudapi", "mariadb-v1-de-txl" → "mariadb". */
+/** "cloudapi-v6" → "cloudapi", "mariadb-v1-de-txl" → "mariadb". */ // gitleaks:allow
 export function apiFamily(api: string): string {
   return api.replace(/-v\d+(-.*)?$/, '')
 }
@@ -1029,6 +1682,44 @@ function metaFacts(o: Obj): (Fact | undefined)[] {
     fact('Created', by(m.createdDate, m.createdBy)),
     fact('Modified', by(m.lastModifiedDate, m.lastModifiedBy)),
   ]
+}
+
+/** Before the State/Created/Modified facts, which close every list. */
+function insertFact(n: GraphNode, f: Fact | undefined) {
+  if (!f) return
+  const at = n.facts.findIndex((x) => x.label === 'State' || x.label === 'Created' || x.label === 'Modified')
+  n.facts.splice(at < 0 ? n.facts.length : at, 0, f)
+}
+
+/** "mongodb+srv://m-1.mongodb.de-fra.ionos.com" → "m-1.mongodb.de-fra.ionos.com". */
+function hostOf(url: string | undefined) {
+  const m = url && /^[a-z+]+:\/\/(?:[^@/]*@)?([^/:?,]+)/i.exec(url)
+  return m ? m[1].toLowerCase() : undefined
+}
+
+function bytes(v: unknown): string | undefined {
+  const n = num(v)
+  if (n === undefined) return undefined
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let i = 0
+  let x = n
+  while (x >= 1024 && i < units.length - 1) {
+    x /= 1024
+    i++
+  }
+  return `${i ? x.toFixed(x < 10 ? 1 : 0) : x} ${units[i]}`
+}
+
+/** Milliseconds as days or hours: "7 days", "12 hours". */
+function duration(ms: number) {
+  const h = ms / 3_600_000
+  return h >= 48 ? `${Math.round(h / 24)} days` : `${Math.round(h)} hours`
+}
+
+/** Whole days from a to b (negative when b is earlier). */
+function daysBetween(a: string, b: string): number | undefined {
+  const [x, y] = [Date.parse(a), Date.parse(b)]
+  return Number.isNaN(x) || Number.isNaN(y) ? undefined : Math.floor((y - x) / 86_400_000)
 }
 
 function gb(mb: unknown): string | undefined {

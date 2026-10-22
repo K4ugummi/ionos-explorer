@@ -167,12 +167,14 @@ const num = (v: number) => String(Math.round(v * 10) / 10)
 
 // --- file names --------------------------------------------------------------------
 
+export type ExportExt = 'svg' | 'png' | 'pdf' | 'drawio' | 'zip'
+
 /**
  * `ionos-<contract>-<view>-<date>.<ext>`, the date being the snapshot's.
  * Only letters, digits, dots, dashes and underscores: accents are dropped,
  * anything else becomes a dash; a long view name is cut.
  */
-export function exportFileName(info: Pick<ExportInfo, 'contract' | 'view' | 'snapshot'>, ext: 'svg' | 'png' | 'drawio'): string {
+export function exportFileName(info: Pick<ExportInfo, 'contract' | 'view' | 'snapshot'>, ext: ExportExt): string {
   const clean = (s: string, max: number) =>
     s
       .normalize('NFKD')
@@ -702,9 +704,14 @@ const MIN_WIDTH = 420
 
 /**
  * The view as a standalone SVG document: light colours, fixed fonts and
- * sizes, every box at full detail, the legend and title in a footer.
+ * sizes, every box at full detail, the legend and title in a footer. With
+ * `transparent` there is no background (boxes and groups keep their fills).
  */
-export function exportSvg(layout: Layout, info: ExportInfo): { svg: string; width: number; height: number } {
+export function exportSvg(
+  layout: Layout,
+  info: ExportInfo,
+  { transparent = false }: { transparent?: boolean } = {},
+): { svg: string; width: number; height: number } {
   const { abs, shapes, bounds } = exportScene(layout)
   const width = Math.ceil(Math.max(bounds.width + 2 * MARGIN, MIN_WIDTH))
   const legend = legendItems(layout, info)
@@ -713,7 +720,7 @@ export function exportSvg(layout: Layout, info: ExportInfo): { svg: string; widt
   // The picture's top left corner lands at the margin (own positions can move boxes to negative coordinates).
   const [dx, dy] = [MARGIN - bounds.x, MARGIN - bounds.y]
   const svg = new Svg()
-  svg.add(`<rect width="${width}" height="${height}" fill="${T.bg}"/>`)
+  if (!transparent) svg.add(`<rect width="${width}" height="${height}" fill="${T.bg}"/>`)
   svg.add(`<g transform="translate(${num(dx)} ${num(dy)})">`)
   for (const n of layout.nodes) if (n.type === 'group') drawGroup(svg, n, abs.get(n.id)!)
   for (const s of shapes) drawEdge(svg, s)
@@ -748,9 +755,23 @@ export function pngScale(width: number, height: number, wanted = 2): number {
   )
 }
 
-/** Draws the SVG on a canvas (an image from a `blob:` URL, allowed by the CSP's img-src) and encodes it as PNG. */
+/** Draws the SVG on a canvas and encodes it as PNG. */
 export async function svgToPng(svg: string, width: number, height: number, wanted = 2): Promise<{ blob: Blob; scale: number }> {
-  const scale = pngScale(width, height, wanted)
+  const { canvas, scale } = await svgToCanvas(svg, width, height, wanted)
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) throw new Error(`The picture is too large for a PNG (${canvas.width} × ${canvas.height} pixels); export SVG instead`)
+  return { blob, scale }
+}
+
+/** Draws the SVG on a canvas (an image from a `blob:` URL, allowed by the CSP's img-src), at `wanted` times its size or as large as allowed. */
+export async function svgToCanvas(
+  svg: string,
+  width: number,
+  height: number,
+  wanted = 2,
+  maxPixels = MAX_PIXELS,
+): Promise<{ canvas: HTMLCanvasElement; scale: number }> {
+  const scale = Math.min(pngScale(width, height, wanted), Math.sqrt(maxPixels / Math.max(1, width * height)))
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
   try {
     const img = new Image()
@@ -765,9 +786,7 @@ export async function svgToPng(svg: string, width: number, height: number, wante
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('No canvas available')
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!blob) throw new Error(`The picture is too large for a PNG (${canvas.width} × ${canvas.height} pixels); export SVG instead`)
-    return { blob, scale }
+    return { canvas, scale }
   } finally {
     URL.revokeObjectURL(url)
   }
@@ -915,6 +934,15 @@ function edgeStyle(s: EdgeShape, sAbs: Rect, tAbs: Rect): string {
  * takes its lines along. A second layer holds the title and the legend.
  */
 export function exportDrawio(layout: Layout, info: ExportInfo): string {
+  return exportDrawioPages([{ layout, info }])
+}
+
+/** Several views in one draw.io file, one page (tab) each, named after the view. */
+export function exportDrawioPages(pages: { layout: Layout; info: ExportInfo }[]): string {
+  return ['<mxfile host="IONOS Explorer" type="device">', ...pages.map((p, i) => drawioPage(p.layout, p.info, i)), '</mxfile>', ''].join('\n')
+}
+
+function drawioPage(layout: Layout, info: ExportInfo, page: number): string {
   const { abs, shapes, bounds } = exportScene(layout)
   const cell = new Map(layout.nodes.map((n, i) => [n.id, `n${i + 1}`]))
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
@@ -978,8 +1006,7 @@ export function exportDrawio(layout: Layout, info: ExportInfo): string {
 
   const height = top + 80
   return [
-    '<mxfile host="IONOS Explorer" type="device">',
-    `<diagram id="ionos-explorer" name="${xml(info.title)}">`,
+    `<diagram id="ionos-explorer${page ? `-${page + 1}` : ''}" name="${xml(info.title)}">`,
     `<mxGraphModel dx="0" dy="0" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="${Math.ceil(width)}" pageHeight="${Math.ceil(height)}" background="${T.bg}" math="0" shadow="0">`,
     '<root>',
     '<mxCell id="0"/>',
@@ -989,8 +1016,6 @@ export function exportDrawio(layout: Layout, info: ExportInfo): string {
     '</root>',
     '</mxGraphModel>',
     '</diagram>',
-    '</mxfile>',
-    '',
   ].join('\n')
 }
 

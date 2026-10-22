@@ -1184,6 +1184,46 @@ label.check {
   color: var(--muted);
 }
 
+/* PNG size and background, below the formats */
+.dg-export-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.dg-export-opts .seg button {
+  padding: 2px 9px;
+  font-size: 12px;
+}
+
+.dg-export-opt-label {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dg-export-opts label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.dg-export-opts input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.dg-export-all {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 .dg-export-error {
   margin: 6px 0 0;
   font-size: 12px;
@@ -1252,6 +1292,12 @@ label.check {
 .dg-layers-pop input {
   margin: 0;
   accent-color: var(--accent);
+}
+
+.dg-layers-buttons {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .dg-layers-note {
@@ -2585,4 +2631,298 @@ button.change-head:hover .name {
   border-left: 2px solid var(--border);
   color: var(--muted);
   font-size: 12.5px;
+}
+
+/* "Show" lights one route up on the canvas; its section is marked here too. */
+.path-route h2 .path-show {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.path-route h2 .path-show[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.path-route.lit {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.path-copied {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---------- hosted mode: login and accounts ---------- */
+
+.login-card {
+  display: grid;
+  gap: 12px;
+}
+
+.login-card p {
+  margin: 0;
+}
+
+.login-form {
+  display: grid;
+  gap: 8px;
+}
+
+.login-form label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.login-form .hint {
+  font-size: 12px;
+}
+
+.login-providers {
+  display: grid;
+  gap: 8px;
+}
+
+.login-providers .open-or {
+  margin: 4px 0 0;
+}
+
+.login-providers .btn {
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+}
+
+.login-providers .btn:disabled {
+  cursor: default;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.account-role {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.account-who {
+  margin: 0;
+}
+
+.account-section .login-form {
+  margin-top: 8px;
+}
+
+.account-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modal.wide {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.users {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.users-back {
+  justify-self: start;
+}
+
+.user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.user-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.user-who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+
+.user-last {
+  font-size: 12px;
+}
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-add h3 {
+  font-size: 14px;
+  margin: 4px 0 0;
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.link-box {
+  display: grid;
+  gap: 6px;
+}
+
+.link-box .row {
+  gap: 6px;
+}
+
+.link-box .fetch-input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ---------- snapshot history (hosted) ---------- */
+
+.history {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.history-contract {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-head h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.history-when {
+  font-variant-numeric: tabular-nums;
+}
+
+.history-what {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.history-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.history-more {
+  justify-self: start;
+}
+
+.history-usage {
+  font-size: 12px;
+  margin: 0;
+}
+
+.compare-from {
+  font-size: 15px;
+  margin: 4px 0 0;
+}
+
+/* ---------- two-factor authentication ---------- */
+
+.totp-setup {
+  display: grid;
+  gap: 8px;
+}
+
+.totp-qr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.qr {
+  width: 176px;
+  height: 176px;
+  border-radius: 4px;
+  flex: none;
+}
+
+.totp-key {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  word-spacing: 2px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.totp-code {
+  font-family: var(--mono);
+  letter-spacing: 2px;
+  max-width: 14em;
+}
+
+.totp-recovery {
+  display: grid;
+  gap: 8px;
+}
+
+.totp-recovery p {
+  margin: 0;
+}
+
+.totp-codes {
+  margin: 0;
+  padding-left: 2em;
+  columns: 2;
+  font-family: var(--mono);
+}
+
+.totp-saved {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
 }

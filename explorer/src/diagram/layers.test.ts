@@ -6,7 +6,7 @@ import type { Model, NodeKind } from '../model/types'
 import { fixtureModel, previousFixtureModel } from '../test/fixture'
 import { contractDiagram, datacenterDiagram } from './build'
 import { toFlow } from './flow'
-import { emphasized, hiddenBy, LAYERS, NO_LAYERS, parseLayers, serializeLayers, type Layer } from './layers'
+import { emphasized, hiddenBy, LAYERS, layersFromHash, layersHash, NO_LAYERS, parseLayers, serializeLayers, type Layer } from './layers'
 import { layoutDiagram, layoutSignature } from './layout'
 import type { Diagram, DiagramNode } from './types'
 
@@ -21,6 +21,17 @@ describe('stored layers', () => {
     expect(parseLayers('{"hidden":["lb","nope",3],"emphasis":"loud"}')).toEqual({ hidden: new Set(['lb']), emphasis: undefined })
     expect(parseLayers('not json')).toBe(NO_LAYERS)
     expect(parseLayers(null)).toBe(NO_LAYERS)
+  })
+
+  it('go into a link and come back from it', () => {
+    const l = { hidden: new Set<Layer>(['managed', 'lb']), emphasis: 'appliances' as const }
+    expect(layersHash(l)).toEqual({ hide: 'lb,managed', emphasis: 'appliances' })
+    expect(layersFromHash('lb,managed', 'appliances')).toEqual(l)
+    // Everything shown: no entries; a link without them says nothing about layers.
+    expect(layersHash(NO_LAYERS)).toEqual({ hide: undefined, emphasis: undefined })
+    expect(layersFromHash(null, null)).toBeUndefined()
+    expect(layersFromHash('', null)).toEqual({ hidden: new Set(), emphasis: undefined })
+    expect(layersFromHash('lb,,nope', 'loud')).toEqual({ hidden: new Set(['lb']), emphasis: undefined })
   })
 })
 
@@ -45,7 +56,7 @@ describe('layer switches', async () => {
   const expected: Record<Layer, { node: (n: DiagramNode) => boolean; edge: string[] }> = {
     lb: { node: resources(['nlb', 'alb']), edge: [] },
     gateways: { node: resources(['natgateway', 'vpngateway']), edge: [] },
-    managed: { node: resources(['nodepool', 'postgres']), edge: [] },
+    managed: { node: resources(['nodepool', 'postgres', 'mariadb', 'mongodb', 'inmemorydb', 'kafka', 'nfs']), edge: [] },
     links: { node: () => false, edge: ['tunnel', 'manual'] },
     leftovers: { node: (n) => LEFTOVERS.includes(n.id) || LEFTOVERS.includes(n.parent ?? ''), edge: [] },
     peers: { node: () => false, edge: ['peer'] },

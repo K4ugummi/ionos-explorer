@@ -17,7 +17,7 @@ export interface Layers {
 export const LAYERS: { id: Layer; label: string; title: string; contract?: boolean }[] = [
   { id: 'lb', label: 'Load balancers', title: 'Network and application load balancers and their target lines' },
   { id: 'gateways', label: 'NAT and VPN gateways', title: 'NAT gateways, VPN gateways and the tunnels drawn from them' },
-  { id: 'managed', label: 'Managed services', title: 'Kubernetes node pools and PostgreSQL clusters' },
+  { id: 'managed', label: 'Managed services', title: 'Kubernetes node pools, databases, Kafka and file storage' },
   { id: 'links', label: 'VPN tunnels and manual links', title: 'Also the endpoints outside the contract', contract: true },
   {
     id: 'leftovers',
@@ -31,7 +31,7 @@ export const LAYERS: { id: Layer; label: string; title: string; contract?: boole
 const KINDS: Partial<Record<Layer, NodeKind[]>> = {
   lb: ['nlb', 'alb'],
   gateways: ['natgateway', 'vpngateway'],
-  managed: ['nodepool', 'postgres'],
+  managed: ['nodepool', 'postgres', 'mariadb', 'mongodb', 'inmemorydb', 'kafka', 'nfs'],
 }
 
 /** Whether a resource of this kind is in a hidden layer. */
@@ -39,19 +39,30 @@ export const hiddenKind = (hidden: ReadonlySet<Layer>, kind: NodeKind) => [...hi
 
 export const NO_LAYERS: Layers = { hidden: new Set() }
 
+/**
+ * Where a choice is kept: per contract (`scope`, its number), so each
+ * contract keeps its own; the key without a scope is the one choice of
+ * earlier versions, still read for a contract that has none yet.
+ */
 export const STORAGE_KEY = 'ionos-explorer:layers'
+const storageKey = (scope?: string) => (scope ? `${STORAGE_KEY}:${scope}` : STORAGE_KEY)
 
 /** Reads a stored choice; anything unknown or broken counts as "everything shown". */
 export function parseLayers(raw: string | null): Layers {
   if (!raw) return NO_LAYERS
   try {
     const v = JSON.parse(raw) as { hidden?: unknown; emphasis?: unknown }
-    const known = new Set<string>(LAYERS.map((l) => l.id))
-    const hidden = Array.isArray(v.hidden) ? v.hidden.filter((x): x is Layer => typeof x === 'string' && known.has(x)) : []
-    const emphasis = v.emphasis === 'appliances' || v.emphasis === 'changes' ? v.emphasis : undefined
-    return { hidden: new Set(hidden), emphasis }
+    return fromParts(Array.isArray(v.hidden) ? v.hidden : [], v.emphasis)
   } catch {
     return NO_LAYERS
+  }
+}
+
+function fromParts(hidden: unknown[], emphasis: unknown): Layers {
+  const known = new Set<string>(LAYERS.map((l) => l.id))
+  return {
+    hidden: new Set(hidden.filter((x): x is Layer => typeof x === 'string' && known.has(x))),
+    emphasis: emphasis === 'appliances' || emphasis === 'changes' ? emphasis : undefined,
   }
 }
 
@@ -59,18 +70,36 @@ export function serializeLayers(l: Layers): string {
   return JSON.stringify({ hidden: LAYERS.map((x) => x.id).filter((id) => l.hidden.has(id)), emphasis: l.emphasis })
 }
 
-export function loadLayers(): Layers {
+/**
+ * The choice in a link: `hide=lb,managed` and `emphasis=appliances` in the
+ * hash, so a shared link shows what its sender saw. Undefined when the
+ * link says nothing about layers.
+ */
+export function layersFromHash(hide: string | null, emphasis: string | null): Layers | undefined {
+  if (hide === null && emphasis === null) return undefined
+  return fromParts((hide ?? '').split(','), emphasis)
+}
+
+/** Hash entries for a choice; everything shown removes them. */
+export function layersHash(l: Layers): { hide?: string; emphasis?: string } {
+  const hide = LAYERS.map((x) => x.id).filter((id) => l.hidden.has(id))
+  return { hide: hide.length ? hide.join(',') : undefined, emphasis: l.emphasis }
+}
+
+export function loadLayers(scope?: string): Layers {
   try {
-    return parseLayers(localStorage.getItem(STORAGE_KEY))
+    const own = scope ? localStorage.getItem(storageKey(scope)) : null
+    return parseLayers(own ?? localStorage.getItem(STORAGE_KEY))
   } catch {
     return NO_LAYERS
   }
 }
 
-export function saveLayers(l: Layers) {
+export function saveLayers(l: Layers, scope?: string) {
   try {
-    if (!l.hidden.size && !l.emphasis) localStorage.removeItem(STORAGE_KEY)
-    else localStorage.setItem(STORAGE_KEY, serializeLayers(l))
+    // Everything shown is stored too: it overrides the choice of earlier versions.
+    if (!scope && !l.hidden.size && !l.emphasis) localStorage.removeItem(STORAGE_KEY)
+    else localStorage.setItem(storageKey(scope), serializeLayers(l))
   } catch {
     // Private mode or storage disabled: the choice lasts as long as the page.
   }

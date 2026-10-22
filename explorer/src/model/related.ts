@@ -17,6 +17,10 @@ const TITLES: Record<EdgeKind, [string, string]> = {
   tunnel: ['Remote end', 'VPN tunnels ending here'],
   manual: ['Manual links', 'Manual links'],
   'secured-by': ['Security Groups', 'Applied to'],
+  'resolves-to': ['Points to', 'DNS names'],
+  'uses-certificate': ['Certificate', 'Used by'],
+  upstream: ['Origin', 'CDN distributions in front'],
+  manages: ['Servers it created', 'Auto scaling group'],
 }
 
 export interface RelatedItem {

@@ -431,8 +431,22 @@ function summarize(model: Model) {
         'vpngateway',
         'k8s',
         'postgres',
+        'mariadb',
+        'mongodb',
+        'inmemorydb',
+        'kafka',
+        'nfs',
+        'autoscaling',
         'volume',
+        'snapshot',
+        'backupunit',
         'ipblock',
+        'dnszone',
+        'dnsrecord',
+        'cdn',
+        'certificate',
+        'registry',
+        'pipeline',
         'external',
         'other',
       ] as NodeKind[]
@@ -451,6 +465,11 @@ function summarize(model: Model) {
   const corrected = nics.filter((n) => n.ionosIps).length
   if (unverified) stats.push({ label: 'NIC IPs not verified (DHCP off)', count: unverified, query: 'kind:nic dhcp:off -is:corrected' })
   if (corrected) stats.push({ label: 'Corrected NIC IPs', count: corrected, query: 'kind:nic is:corrected' })
+  const flagged = (flag: string) => [...model.nodes.values()].filter((n) => n.flags?.includes(flag)).length
+  const expiring = flagged('expiring')
+  const dangling = flagged('dangling')
+  if (expiring) stats.push({ label: 'Certificates expired or ending within 30 days', count: expiring, query: 'is:expiring' })
+  if (dangling) stats.push({ label: 'DNS records pointing at nothing in the contract', count: dangling, query: 'is:dangling' })
 
   return { dcs, locations: [...locations].sort((a, b) => a[0].localeCompare(b[0])), dcCounts, pccs, stats, appliances }
 }

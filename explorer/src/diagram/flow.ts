@@ -63,9 +63,12 @@ export function handles(s: Rect | undefined, t: Rect | undefined, sideways = fal
 
 /**
  * Turns a layout into React Flow elements with selection and search state
- * applied. `emphasis` (model ids, from a layer emphasis) dims everything
- * else like a search does, without marking anything as a hit. `draggable`
- * lists the boxes the user may move (own positions).
+ * applied. `emphasis` (model ids, from a layer emphasis or the route picked
+ * in a path view) dims everything else like a search does, without marking
+ * anything as a hit; with `strict` a line stays bright only when both its
+ * ends do (a route: the other routes leave from the same ends). `draggable`
+ * lists the boxes the user may move (own positions); `picked` the boxes
+ * picked with a selection rectangle, which move together.
  */
 export function toFlow(
   layout: Layout,
@@ -74,6 +77,7 @@ export function toFlow(
   matches: Set<string> | null,
   emphasis: Set<string> | null = null,
   draggable?: ReadonlySet<string>,
+  { strict = false, picked }: { strict?: boolean; picked?: ReadonlySet<string> } = {},
 ) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
   const selectedNode = anchor && byId.has(anchor) ? anchor : undefined
@@ -121,7 +125,13 @@ export function toFlow(
       hidden,
       selectable: !!e.ref,
       zIndex: hl ? 2 : 1,
-      className: ['dg-edge', e.kind, hl && 'hl', e.moved && 'moved', !(lit(e.source) || lit(e.target) || bright?.has(e.id)) && 'dim']
+      className: [
+        'dg-edge',
+        e.kind,
+        hl && 'hl',
+        e.moved && 'moved',
+        !(strict ? lit(e.source) && lit(e.target) : lit(e.source) || lit(e.target) || bright?.has(e.id)) && 'dim',
+      ]
         .filter(Boolean)
         .join(' '),
       data: {
@@ -147,7 +157,7 @@ export function toFlow(
     measured: { width: n.width, height: n.height },
     style: { width: n.width, height: n.height },
     zIndex: n.type === 'group' ? 0 : 3,
-    selected: n.id === selectedNode,
+    selected: n.id === selectedNode || !!picked?.has(n.id),
     selectable: !!n.ref,
     draggable: !!draggable?.has(n.id),
     data: {

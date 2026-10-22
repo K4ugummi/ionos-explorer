@@ -10,6 +10,8 @@ import type { GraphNode, Model, NodeKind } from '../model/types'
  *   is:appliance        servers that look like network appliances
  *   is:corrected        NICs (and their servers) with an IP correction you entered
  *   is:added, is:changed  when comparing with an older snapshot: new or changed since
+ *   is:expiring         certificates expired or ending within 30 days of the snapshot (is:expired: only those ended)
+ *   is:dangling         DNS records naming an IP or host that is not in the contract
  *   dhcp:off            NICs whose IP IONOS does not assign (the VM may use another), and their servers
  *   type:cube           server type (cube, dedicated/enterprise, vcpu, gpu) or other subtype
  *   dc:fra-prod         datacenter name (substring or glob)
@@ -101,6 +103,7 @@ function matchKind(node: GraphNode, value: string) {
   if (value === 'corrected') return !!node.ionosIps
   if (value === 'added' || value === 'new') return node.change === 'added'
   if (value === 'changed' || value === 'modified') return node.change === 'changed'
+  if (node.flags?.includes(value)) return true
   const kind = KIND_ALIASES[value] ?? value
   return node.kind === kind
 }

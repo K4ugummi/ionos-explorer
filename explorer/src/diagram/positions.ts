@@ -118,3 +118,44 @@ export function padding(value?: string) {
   const get = (side: string) => Number(value?.match(new RegExp(`${side}=(-?[\\d.]+)`))?.[1] ?? 12)
   return { top: get('top'), left: get('left'), bottom: get('bottom'), right: get('right') }
 }
+
+/** The background's dot spacing; with snapping on, a dropped box's top left corner lands on a dot. */
+export const GRID = 20
+
+export function snapToGrid(p: Point, grid = GRID): Point {
+  return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid }
+}
+
+/**
+ * The boxes a drag moves: the one held, or with a selection of several
+ * boxes (`picked`) that includes it, all of them. A box inside another
+ * moving box is left out: it goes along with its group anyway.
+ */
+export function movingWith(held: string, picked: ReadonlySet<string>, nodes: readonly DiagramNode[]): Set<string> {
+  if (!picked.has(held) || picked.size < 2) return new Set([held])
+  const parent = new Map(nodes.map((n) => [n.id, n.parent]))
+  const inMoving = (id: string) => {
+    for (let p = parent.get(id); p; p = parent.get(p)) if (picked.has(p)) return true
+    return false
+  }
+  return new Set([...picked].filter((id) => parent.has(id) && !inMoving(id)))
+}
+
+const SNAP_KEY = 'ionos-explorer:snap'
+
+export function loadSnap(): boolean {
+  try {
+    return localStorage.getItem(SNAP_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveSnap(on: boolean) {
+  try {
+    if (on) localStorage.setItem(SNAP_KEY, '1')
+    else localStorage.removeItem(SNAP_KEY)
+  } catch {
+    // Storage disabled: the choice lasts as long as the page.
+  }
+}

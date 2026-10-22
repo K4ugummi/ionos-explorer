@@ -1,6 +1,6 @@
 import { countsText } from '../diff/diff'
 import { MANY_LANS } from '../model/appliances'
-import { KINDS, subtypeLabel } from '../model/kinds'
+import { KINDS, LAN_SERVICES, subtypeLabel } from '../model/kinds'
 import { DEFAULT_HOPS, neighbourhood, networkGraph, networkNode, type NetEdge, type Path } from '../model/paths'
 import type { GraphEdge, GraphNode, Model, NodeKind } from '../model/types'
 import { hiddenKind, type Layer } from './layers'
@@ -81,8 +81,8 @@ function subtitle(n: GraphNode): string {
   const what =
     n.kind === 'nodepool'
       ? `${KINDS.nodepool.label}${fact(n, 'Nodes') ? ` · ${plural(Number(fact(n, 'Nodes')), 'node')}` : ''}`
-      : n.kind === 'postgres'
-        ? `PostgreSQL ${fact(n, 'PostgreSQL') ?? ''}`.trim()
+      : LAN_SERVICES.has(n.kind)
+        ? `${LAN_SERVICES.get(n.kind)} ${fact(n, LAN_SERVICES.get(n.kind)!) ?? ''}`.trim()
         : n.kind === 'vpngateway'
           ? `${n.subtype ?? ''} VPN gateway`.trim()
           : (subtypeLabel(n.kind, n.subtype) ?? KINDS[n.kind].label)
@@ -156,6 +156,11 @@ const DC_PILLS: [NodeKind, string, string?][] = [
   ['natgateway', 'NAT', 'NAT'],
   ['nodepool', 'node pool'],
   ['postgres', 'PostgreSQL', 'PostgreSQL'],
+  ['mariadb', 'MariaDB', 'MariaDB'],
+  ['mongodb', 'MongoDB', 'MongoDB'],
+  ['inmemorydb', 'In-Memory DB', 'In-Memory DB'],
+  ['kafka', 'Kafka', 'Kafka'],
+  ['nfs', 'NFS', 'NFS'],
   ['vpngateway', 'VPN gateway'],
 ]
 
@@ -487,7 +492,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   }
   for (const n of [...model.nodes.values()].sort(byName)) {
     if (n.kind === 'nodepool' && n.dcId === dcId) attach(n, ['member'])
-    else if ((n.kind === 'postgres' || n.kind === 'vpngateway') && out(n).some((e) => e.kind === 'connection' && lanIds.has(e.to)))
+    else if ((LAN_SERVICES.has(n.kind) || n.kind === 'vpngateway') && out(n).some((e) => e.kind === 'connection' && lanIds.has(e.to)))
       attach(n, ['connection'])
   }
 
@@ -775,7 +780,7 @@ export function datacenterDiagram(model: Model, dcId: string, options: DiagramOp
   const leftovers: [string, GraphNode[]][] = [
     ['Unattached volumes', kids.filter((k) => k.kind === 'volume' && !attachedVolumes.has(k.id))],
     ['Security Groups', kids.filter((k) => k.kind === 'securitygroup')],
-    ['Other resources', kids.filter((k) => k.kind === 'other')],
+    ['Other resources', kids.filter((k) => k.kind === 'other' || k.kind === 'autoscaling')],
   ]
   for (const [title, list] of leftovers) {
     if (!list.length || hide.has('leftovers')) continue

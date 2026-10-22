@@ -35,12 +35,18 @@ describe('diagram modes in the hash', async () => {
       { kind: 'focus', id: fw, hops: 2 },
       { kind: 'focus', id: fw, hops: 3 },
       { kind: 'path', from: fw, to: pg, hops: 1 },
+      { kind: 'path', from: fw, to: pg, hops: 2, route: 2 },
     ] as const) {
       const p = modeParams(mode)
       expect(parseMode(p, m)).toEqual(mode)
     }
     expect(modeParams({ kind: 'focus', id: fw, hops: 2 }).hops).toBeUndefined()
-    expect(Object.values(modeParams())).toEqual([undefined, undefined, undefined])
+    expect(Object.values(modeParams())).toEqual([undefined, undefined, undefined, undefined])
     expect(modeKey({ kind: 'path', from: fw, to: pg, hops: 2 })).not.toBe(modeKey({ kind: 'path', from: pg, to: fw, hops: 2 }))
+    // The route lit up is not a view of its own: same layout, same opened groups.
+    expect(modeKey({ kind: 'path', from: fw, to: pg, hops: 2, route: 2 })).toBe(modeKey({ kind: 'path', from: fw, to: pg, hops: 2 }))
+    // A route number that is no number is ignored; a focus has none.
+    expect(parseMode({ path: `${fw},${pg}`, route: 'x' }, m)).toEqual({ kind: 'path', from: fw, to: pg, hops: 2 })
+    expect(modeParams({ kind: 'focus', id: fw, hops: 2 }).route).toBeUndefined()
   })
 })

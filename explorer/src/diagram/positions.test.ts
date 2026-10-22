@@ -7,8 +7,8 @@ import { fixtureModel } from '../test/fixture'
 import { contractDiagram, datacenterDiagram } from './build'
 import { handles, toFlow } from './flow'
 import { absolutePositions, layoutDiagram, layoutSignature, withData } from './layout'
-import { applyPositions, movable, offsetTo, padding, type Offset } from './positions'
-import type { Layout } from './types'
+import { applyPositions, movable, movingWith, offsetTo, padding, snapToGrid, type Offset } from './positions'
+import type { DiagramNode, Layout } from './types'
 
 const named = (m: Model, name: string) => [...m.nodes.values()].find((n) => n.name === name)!
 const at = (x: number, y: number, width = 0, height = 0) => ({ x, y, width, height })
@@ -225,5 +225,30 @@ describe('handles', () => {
     expect(handles(box(0, 400), box(120, 0), true)).toEqual(['top-out', 'bottom-in'])
     // Overlapping boxes: down.
     expect(handles(box(0, 0), box(10, 10), true)).toEqual(['bottom', 'top'])
+  })
+})
+
+describe('snapping and moving several boxes', () => {
+  const nodes = [
+    { id: 'loc', type: 'group' },
+    { id: 'a', type: 'dc', parent: 'loc' },
+    { id: 'b', type: 'dc', parent: 'loc' },
+    { id: 'c', type: 'resource' },
+  ] as DiagramNode[]
+
+  it('snaps to the dots of the background', () => {
+    expect(snapToGrid({ x: 29, y: -11 })).toEqual({ x: 20, y: -20 })
+    expect(snapToGrid({ x: 30, y: 9.9 }, 10)).toEqual({ x: 30, y: 10 })
+  })
+
+  it('moves the held box alone unless it is one of several picked', () => {
+    expect(movingWith('a', new Set(), nodes)).toEqual(new Set(['a']))
+    expect(movingWith('a', new Set(['a']), nodes)).toEqual(new Set(['a']))
+    expect(movingWith('a', new Set(['b', 'c']), nodes)).toEqual(new Set(['a']))
+    expect(movingWith('a', new Set(['a', 'c']), nodes)).toEqual(new Set(['a', 'c']))
+    // A box inside a picked group goes along with the group.
+    expect(movingWith('loc', new Set(['loc', 'a', 'c']), nodes)).toEqual(new Set(['loc', 'c']))
+    // Picked boxes this view does not have are left out.
+    expect(movingWith('a', new Set(['a', 'gone']), nodes)).toEqual(new Set(['a']))
   })
 })

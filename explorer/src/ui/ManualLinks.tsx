@@ -20,6 +20,13 @@ export const LINKABLE = new Set<NodeKind>([
   'k8s',
   'nodepool',
   'postgres',
+  'mariadb',
+  'mongodb',
+  'inmemorydb',
+  'kafka',
+  'nfs',
+  'autoscaling',
+  'cdn',
 ])
 
 /** Links the user added to this node, and a form to add more. */

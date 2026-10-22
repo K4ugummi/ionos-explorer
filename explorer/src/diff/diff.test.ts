@@ -38,13 +38,14 @@ describe('comparing the demo with its state two weeks earlier', async () => {
       { field: 'Firewall rules', before: expect.stringContaining('TCP 3389'), after: expect.not.stringContaining('3389') },
     ])
     expect(rule.dcName).toBe('fra-mgmt')
-    // New and removed volumes and NICs come with their servers.
+    // New and removed volumes and NICs come with their servers; the new DNS record alone.
     expect(
       diff.changes
         .filter((c) => c.type === 'added')
         .map((c) => c.node.kind)
         .sort(),
-    ).toEqual([...Array(7).fill('nic'), 'server', 'volume'])
+    ).toEqual(['dnsrecord', ...Array(7).fill('nic'), 'server', 'volume'])
+    expect(diff.changes.find((c) => c.node.kind === 'dnsrecord')!.node.name).toBe('beta.shop.example.com')
   })
 
   it('reports nothing for an identical snapshot, and counts per datacenter', () => {

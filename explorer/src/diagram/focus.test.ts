@@ -6,7 +6,8 @@ import { findPaths } from '../model/paths'
 import type { Model } from '../model/types'
 import { fixtureModel } from '../test/fixture'
 import { focusDiagram, pathDiagram } from './build'
-import { layoutDiagram } from './layout'
+import { toFlow } from './flow'
+import { layoutDiagram, withData } from './layout'
 import type { Diagram } from './types'
 
 const demoLinks = parse(readFileSync(new URL('../../../fixtures/demo-annotations.json', import.meta.url), 'utf8')).annotations
@@ -201,5 +202,20 @@ describe('path diagram', async () => {
     const tunnel = d.edges.find((e) => e.kind === 'tunnel')!
     expect(tunnel.label).toBe('txl-core')
     expect(d.anchors.get(id(m, 'txl-core'))).toBe(tunnel.id)
+  })
+
+  it('lights up one route: its boxes and the lines between them, the rest dims', async () => {
+    const d = pathDiagram(m, paths)
+    const layout = withData(await layoutDiagram(d, new ELK()), d)
+    const route = paths[paths.length - 1]
+    const flow = toFlow(layout, d, undefined, null, new Set(route.nodes), undefined, { strict: true })
+    const lit = new Set(route.nodes.map((x) => d.anchors.get(x)))
+    for (const n of flow.nodes.filter((x) => x.data.node.type !== 'group')) expect(n.data.dim).toBe(!lit.has(n.id))
+    for (const e of flow.edges) expect(e.className!.split(' ').includes('dim')).toBe(!(lit.has(e.source) && lit.has(e.target)))
+    // Not strict (a layer emphasis): a line touching a bright box stays bright.
+    const loose = toFlow(layout, d, undefined, null, new Set(route.nodes))
+    expect(loose.edges.filter((e) => !e.className!.includes('dim')).length).toBeGreaterThanOrEqual(
+      flow.edges.filter((e) => !e.className!.includes('dim')).length,
+    )
   })
 })
