@@ -53,6 +53,9 @@ const proxy = (target: string): ProxyOptions => ({
 })
 
 export default defineConfig({
+  // Relative asset URLs: the build works below any path (ionos-explorer in
+  // hosted mode under https://tools.example.com/ionos-explorer/, a static host).
+  base: './',
   plugins: [react(), contentSecurityPolicy(), ...(backend ? [localServerMarker()] : [])],
   server: {
     // The demo snapshot is imported from ../fixtures.

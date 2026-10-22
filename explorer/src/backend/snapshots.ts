@@ -1,4 +1,5 @@
 import type { Manifest } from '../snapshot/types'
+import type { HistoryEntry } from './backend'
 
 /**
  * The snapshot a freshly fetched one is compared with: the one open before
@@ -10,6 +11,37 @@ export function comparisonBase<T extends { manifest: Manifest }>(previous: T | u
   const [a, b] = [previous.manifest, next.manifest]
   if (a.contract?.number === undefined || a.contract.number !== b.contract?.number) return undefined
   return new Date(a.createdAt) < new Date(b.createdAt) ? previous : undefined
+}
+
+/** The history folder of a snapshot's contract (server: history.contractDir). */
+export function historyContract(m: Pick<Manifest, 'contract'>): string {
+  const n = m.contract?.number
+  return n !== undefined && n > 0 ? String(n) : 'unknown'
+}
+
+/**
+ * The snapshot of the history a newly opened one is compared with: the
+ * newest older one of the same contract, not the snapshot itself.
+ */
+export function historyBase(entries: HistoryEntry[], m: Pick<Manifest, 'contract' | 'createdAt'>, self?: string): HistoryEntry | undefined {
+  const at = new Date(m.createdAt).getTime()
+  const contract = historyContract(m)
+  return entries
+    .filter((e) => e.contract === contract && e.id !== self && new Date(e.createdAt).getTime() < at)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+}
+
+/** "1.2 MB" */
+export function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let v = bytes / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
 }
 
 /** As ionos-export names its files: ionos-<contract>-<UTC time>.ionx(.age). */

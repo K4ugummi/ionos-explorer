@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Client, servedByBackend, type Backend, type BackendStatus, type FetchRequest } from './backend'
+import { Client, hostedBackend, servedByBackend, type Backend, type BackendStatus, type FetchRequest } from './backend'
+
+/** Where a fetched snapshot went besides the page: its ID in the history, or why it is not there. */
+export interface FetchedInfo {
+  historyId?: string
+  historyError?: string
+}
 
 /** How often the page asks for progress while a fetch runs (an EventSource cannot send the session header). */
 export const POLL_MS = 400
 
 export interface BackendApi {
   backend: Backend
+  /** ionos-explorer runs hosted for a team, with logins (not on this machine). */
+  hosted: boolean
   /** A request is on its way, or the fetched snapshot is being opened. */
   busy: boolean
   /** The last action's, fetch's or opening's error, in words. */
@@ -17,6 +25,11 @@ export interface BackendApi {
   forget: () => Promise<void>
   /** Opens a fetched snapshot this page did not see being fetched (it was reloaded meanwhile, say). */
   takeWaiting: () => Promise<void>
+  /** Hosted mode: ends the session and leaves the page. */
+  logout: () => Promise<void>
+  /** For the account forms: the client, and a status one of its calls answered. */
+  client: Client
+  apply: (status: BackendStatus) => void
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -27,8 +40,13 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * polled while a fetch runs, and the actions. A finished fetch this page saw
  * running is taken (the server drops it) and handed to `onResult`.
  */
-export function useBackend(onResult: (data: Uint8Array) => Promise<void>, client = defaultClient): BackendApi {
+export function useBackend(
+  onResult: (data: Uint8Array, info: FetchedInfo) => Promise<void>,
+  client = defaultClient,
+  leave: (url: string) => void = (url) => window.location.assign(url),
+): BackendApi {
   const [backend, setBackend] = useState<Backend>(() => (servedByBackend() ? { kind: 'checking' } : { kind: 'none' }))
+  const [hosted] = useState(() => hostedBackend())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
@@ -41,7 +59,9 @@ export function useBackend(onResult: (data: Uint8Array) => Promise<void>, client
     setBusy(true)
     setError(undefined)
     try {
-      await resultHandler.current(await client.takeResult())
+      const b = await client.detect()
+      const f = b.kind === 'ready' ? b.status.fetch : undefined
+      await resultHandler.current(await client.takeResult(), { historyId: f?.historyId, historyError: f?.historyError })
     } catch (e) {
       setError(`Could not open the fetched snapshot: ${message(e)}`)
     } finally {
@@ -122,10 +142,22 @@ export function useBackend(onResult: (data: Uint8Array) => Promise<void>, client
   )
   const cancel = useCallback(() => act(() => client.cancel()), [act, client])
   const forget = useCallback(() => act(() => client.forget()), [act, client])
+  const logout = useCallback(async () => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      leave(await client.logout())
+    } catch (e) {
+      setError(message(e))
+      setBusy(false)
+    }
+  }, [client, leave])
+
+  const apply = useCallback((status: BackendStatus) => setBackend({ kind: 'ready', status }), [])
 
   return useMemo(
-    () => ({ backend, busy, error, notice, start, cancel, forget, takeWaiting: take }),
-    [backend, busy, error, notice, start, cancel, forget, take],
+    () => ({ backend, hosted, busy, error, notice, start, cancel, forget, takeWaiting: take, logout, client, apply }),
+    [backend, hosted, busy, error, notice, start, cancel, forget, take, logout, client, apply],
   )
 }
 

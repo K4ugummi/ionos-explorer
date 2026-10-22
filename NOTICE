@@ -19,12 +19,34 @@ Third-party software shipped in the explorer's build
 - age-encryption (typage): BSD-3-Clause, https://github.com/FiloSottile/typage
 - fflate: MIT, https://github.com/101arrowz/fflate
 - @noble/hashes: MIT, https://github.com/paulmillr/noble-hashes
+- qrcode-generator (Kazuhiko Arase): MIT,
+  https://github.com/kazuhikoarase/qrcode-generator. "QR Code" is a
+  registered trademark of DENSO WAVE INCORPORATED.
 
 Third-party Go modules in the exporter
 --------------------------------------
 
 - filippo.io/age, filippo.io/hpke: BSD-3-Clause
-- golang.org/x/crypto, golang.org/x/sys: BSD-3-Clause
+- golang.org/x/crypto, golang.org/x/sys, golang.org/x/oauth2: BSD-3-Clause
+- github.com/coreos/go-oidc/v3: Apache-2.0, https://github.com/coreos/go-oidc
+- github.com/go-jose/go-jose/v4: Apache-2.0, https://github.com/go-jose/go-jose
+
+Container image
+---------------
+
+- Built on gcr.io/distroless/static-debian13 (Apache-2.0), which holds a
+  few Debian packages (base-files, ca-certificates, media-types,
+  netbase, tzdata) under
+  their own licences; their copyright files are in the image below
+  /usr/share/doc.
+
+Data
+----
+
+- exporter/internal/users/common-passwords.txt.gz: the passwords of 12 or
+  more characters from SecLists' Passwords/Common-Credentials/
+  xato-net-10-million-passwords-1000000.txt, lower-cased; SecLists is MIT,
+  Copyright (c) 2018 Daniel Miessler, https://github.com/danielmiessler/SecLists
 
 Each package's own licence text is in its source distribution
 (explorer/node_modules/<package>/LICENSE, or the Go module cache).

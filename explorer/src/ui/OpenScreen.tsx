@@ -8,13 +8,28 @@ import type { Model } from '../model/types'
 import { EncryptedSnapshotError, isEncrypted, loadSnapshot } from '../snapshot/load'
 import type { BackendApi } from '../backend/useBackend'
 import { FetchPanel } from './FetchPanel'
+import { History } from './History'
+
+/** A snapshot opened from the history on the server: its bytes (to download) and ID. */
+export interface FromHistory {
+  data: Uint8Array
+  historyId: string
+}
 
 /**
  * `demoLinks`: example manual links that come with the demo snapshot.
- * `backend`: ionos-explorer, when it served this page (the fetch panel shows only then).
+ * `backend`: ionos-explorer, when it served this page (the fetch panel shows only then;
+ * hosted with a history, the user's history too).
  */
-export function OpenScreen({ backend, onLoaded }: { backend: BackendApi; onLoaded: (m: Model, demoLinks?: Annotations) => void }) {
+export function OpenScreen({
+  backend,
+  onLoaded,
+}: {
+  backend: BackendApi
+  onLoaded: (m: Model, demoLinks?: Annotations, stored?: FromHistory) => void
+}) {
   const local = backend.backend.kind !== 'none'
+  const history = backend.backend.kind === 'ready' && !!backend.backend.status.history
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [over, setOver] = useState(false)
@@ -88,6 +103,16 @@ export function OpenScreen({ backend, onLoaded }: { backend: BackendApi; onLoade
         {local && (
           <>
             <FetchPanel api={backend} />
+            {history && (
+              <>
+                <h2 className="open-or">Your history</h2>
+                <History
+                  client={backend.client}
+                  action="Open"
+                  onOpen={async (data, e) => onLoaded(buildModel(await loadSnapshot(data)), undefined, { data, historyId: e.id })}
+                />
+              </>
+            )}
             <h2 className="open-or">Open a snapshot file</h2>
           </>
         )}
@@ -146,9 +171,13 @@ export function OpenScreen({ backend, onLoaded }: { backend: BackendApi; onLoade
         )}
 
         <div className="fine">
-          {local
-            ? 'Files are opened in this browser and not uploaded. Fetching runs in the ionos-explorer program on this computer, which sends GET requests only and keeps the token and the data in memory.'
-            : 'Snapshots are opened locally in your browser. Nothing is uploaded, and this page never contacts the IONOS API.'}
+          {backend.hosted && history
+            ? 'Files are opened in this browser and not uploaded. Fetching runs on the ionos-explorer server, which sends GET requests only and keeps your token in memory for your session; what it fetches is kept encrypted in your history there.'
+            : backend.hosted
+            ? 'Files are opened in this browser and not uploaded. Fetching runs on the ionos-explorer server, which sends GET requests only and keeps your token and data in memory for your session.'
+            : local
+              ? 'Files are opened in this browser and not uploaded. Fetching runs in the ionos-explorer program on this computer, which sends GET requests only and keeps the token and the data in memory.'
+              : 'Snapshots are opened locally in your browser. Nothing is uploaded, and this page never contacts the IONOS API.'}
         </div>
       </div>
     </div>

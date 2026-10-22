@@ -1,11 +1,12 @@
 import { useId, useRef, type FormEvent } from 'react'
 import { parseSkip, progressText } from '../backend/backend'
 import type { BackendApi } from '../backend/useBackend'
+import { AccountButton } from './Account'
 
 const time = (s: string) => new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 /**
- * Fetch the contract through the local ionos-explorer program. The token
+ * Fetch the contract through the ionos-explorer program. The token
  * field is uncontrolled: its value is read once on submit, cleared at once
  * and sent to the program; it never becomes React state.
  */
@@ -19,6 +20,16 @@ export function FetchPanel({ api, refresh = false }: { api: BackendApi; refresh?
 
   if (backend.kind === 'none') return null
   if (backend.kind === 'checking') return <div className="fetch-panel hint">Connecting to ionos-explorer…</div>
+  // Hosted: the server sends a browser without a session to its login page.
+  if (backend.kind === 'no-session' && api.hosted) {
+    return (
+      <div className="fetch-panel">
+        <div className="notice" role="status">
+          You are logged out (the session ended). Snapshot files can still be opened. <a href="./">Log in again</a>
+        </div>
+      </div>
+    )
+  }
   if (backend.kind === 'no-session' || backend.kind === 'unreachable') {
     return (
       <div className="fetch-panel">
@@ -52,10 +63,22 @@ export function FetchPanel({ api, refresh = false }: { api: BackendApi; refresh?
   return (
     <form className="fetch-panel" onSubmit={submit} aria-label={refresh ? 'Fetch again' : 'Fetch from IONOS'}>
       {!refresh && <h2>Fetch from IONOS</h2>}
+      {status.user && (
+        <div className="row fetch-user">
+          <span className="hint">Logged in as</span>
+          <AccountButton api={api} className="btn small" />
+          <span className="spacer" />
+          <button type="button" className="btn small" onClick={() => void api.logout()} disabled={busy || running}>
+            Log out
+          </button>
+        </div>
+      )}
       <p className="hint">
         {refresh
           ? 'Fetches the contract again. The open snapshot becomes the one to compare with, so the Changes tab shows what changed.'
-          : 'This program reads your contract with GET requests only. The token goes to it alone and stays in its memory; the data stays in memory until you download it.'}
+          : api.hosted
+            ? 'The server reads your contract with GET requests only, with your own API token. The token stays in its memory for your session only; the data stays in memory until your browser takes it, and nobody else sees either.'
+            : 'This program reads your contract with GET requests only. The token goes to it alone and stays in its memory; the data stays in memory until you download it.'}
       </p>
 
       {status.tokenHeld ? (
@@ -84,7 +107,7 @@ export function FetchPanel({ api, refresh = false }: { api: BackendApi; refresh?
           />
           <label className="check">
             <input ref={keepInput} type="checkbox" defaultChecked disabled={running} /> Keep the token in memory for Refresh (until Forget,
-            exit or 30 minutes unused)
+            {api.hosted ? ' log out' : ' exit'} or 30 minutes unused)
           </label>
         </>
       )}

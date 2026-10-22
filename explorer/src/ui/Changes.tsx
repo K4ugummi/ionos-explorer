@@ -1,11 +1,14 @@
 import { useMemo, useRef, useState } from 'react'
 import previousDemoUrl from '../../../fixtures/demo-contract-previous.ionx?url'
+import type { Client } from '../backend/backend'
+import { historyContract } from '../backend/snapshots'
 import { timeBetween, type Change, type ChangeType, type Diff, type FieldChange } from '../diff/diff'
 import { KINDS } from '../model/kinds'
 import { buildModel } from '../model/build'
 import type { Model, NodeKind } from '../model/types'
 import { EncryptedSnapshotError, isEncrypted, loadSnapshot } from '../snapshot/load'
 import { KindBadge } from './common'
+import { History } from './History'
 
 const TYPES: [ChangeType, string][] = [
   ['added', 'Added'],
@@ -24,12 +27,15 @@ export function Changes({
   diff,
   onCompare,
   onSelect,
+  history,
 }: {
   model: Model
   diff?: Diff
   /** A snapshot to compare with; undefined stops comparing. */
   onCompare: (other?: Model) => void
   onSelect: (id: string) => void
+  /** Hosted with a history: the server, to pick from the history. */
+  history?: Client
 }) {
   const [types, setTypes] = useState<Set<ChangeType>>(new Set(['added', 'changed', 'removed']))
   const [kind, setKind] = useState<NodeKind | ''>('')
@@ -54,7 +60,7 @@ export function Changes({
           and IPs, firewall rules, LANs, Cross Connects, labels, and more. New and changed resources are then also marked in the diagram and
           in search (<code>is:added</code>, <code>is:changed</code>).
         </p>
-        <ComparePicker model={model} onLoaded={(m) => (setPicking(false), onCompare(m))} />
+        <ComparePicker model={model} history={history} onLoaded={(m) => (setPicking(false), onCompare(m))} />
         {picking && (
           <button className="btn small" onClick={() => setPicking(false)}>
             Cancel
@@ -169,8 +175,8 @@ export function ChangeFields({ fields }: { fields: FieldChange[] }) {
   )
 }
 
-/** Loads the snapshot to compare with: a file (encrypted ones too) or, for the demo, its older version. */
-function ComparePicker({ model, onLoaded }: { model: Model; onLoaded: (m: Model) => void }) {
+/** Loads the snapshot to compare with: from the history, a file (encrypted ones too) or, for the demo, its older version. */
+function ComparePicker({ model, history, onLoaded }: { model: Model; history?: Client; onLoaded: (m: Model) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [locked, setLocked] = useState<Uint8Array>()
@@ -210,6 +216,19 @@ function ComparePicker({ model, onLoaded }: { model: Model; onLoaded: (m: Model)
 
   return (
     <div className="compare-picker">
+      {history && (
+        <>
+          <h2 className="compare-from">From your history</h2>
+          <History
+            client={history}
+            contract={historyContract(model.manifest)}
+            exclude={model.manifest.createdAt}
+            action="Compare"
+            onOpen={(data) => load(data)}
+          />
+          <h2 className="compare-from">From a file</h2>
+        </>
+      )}
       <div
         className={`drop${over ? ' over' : ''}`}
         role="button"

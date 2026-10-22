@@ -53,6 +53,8 @@ type harness struct {
 	seen   bytes.Buffer
 	cookie *http.Cookie
 	key    string
+	// Hosted mode: what the browser sends for the public URL.
+	origin, hostHeader, base string
 }
 
 var ui = fstest.MapFS{
@@ -114,9 +116,12 @@ func (h *harness) do(r req) (*http.Response, []byte) {
 	if r.body != "" {
 		body = strings.NewReader(r.body)
 	}
-	hr, err := http.NewRequest(r.method, h.url+r.path, body)
+	hr, err := http.NewRequest(r.method, h.url+h.base+r.path, body)
 	if err != nil {
 		h.t.Fatal(err)
+	}
+	if h.hostHeader != "" {
+		hr.Host = h.hostHeader
 	}
 	if h.cookie != nil && !r.noCookie {
 		hr.AddCookie(h.cookie)
@@ -125,7 +130,11 @@ func (h *harness) do(r req) (*http.Response, []byte) {
 		hr.Header.Set(Header, h.key)
 	}
 	if r.method == http.MethodPost {
-		hr.Header.Set("Origin", h.url)
+		if h.origin != "" {
+			hr.Header.Set("Origin", h.origin)
+		} else {
+			hr.Header.Set("Origin", h.url)
+		}
 		hr.Header.Set("Content-Type", "application/json")
 		hr.Header.Set("Sec-Fetch-Site", "same-origin")
 	}
@@ -204,7 +213,7 @@ func (h *harness) wait() *Fetch {
 
 func TestLogin(t *testing.T) {
 	h := start(t, nil)
-	for _, bad := range []string{"", "?secret=", "?secret=nope", "?secret=" + h.s.secret + "x", "?secret=" + h.s.key} {
+	for _, bad := range []string{"", "?secret=", "?secret=nope", "?secret=" + h.s.secret + "x", "?secret=" + h.s.local.key} {
 		resp, b := h.do(req{path: "/login" + bad})
 		if resp.StatusCode != http.StatusForbidden || len(resp.Cookies()) > 0 || bytes.Contains(b, []byte("session=")) {
 			t.Errorf("%q: %d %v", bad, resp.StatusCode, resp.Cookies())
@@ -471,7 +480,7 @@ func TestFetch(t *testing.T) {
 	if resp, _ := h.do(req{method: http.MethodPost, path: "/api/fetch/result", body: "{}"}); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("second take: %d", resp.StatusCode)
 	}
-	if h.s.result != nil || h.status().Fetch.ResultReady {
+	if h.s.local.result != nil || h.status().Fetch.ResultReady {
 		t.Error("the server kept the snapshot")
 	}
 
@@ -637,7 +646,7 @@ func TestTokenNeverLeaks(t *testing.T) {
 			t.Errorf("the token is in the %s", name)
 		}
 	}
-	if h.s.token != nil || h.status().TokenForgetAt != nil {
+	if h.s.local.token != nil || h.status().TokenForgetAt != nil {
 		t.Error("forget")
 	}
 }
@@ -647,20 +656,20 @@ func TestForgetZeroesTheToken(t *testing.T) {
 	h.login()
 	h.post("/api/fetch", `{"token":"`+token+`","keep":true}`)
 	h.wait()
-	held := h.s.token
+	held := h.s.local.token
 	if string(held) != token {
 		t.Fatal("token not held")
 	}
 	h.post("/api/forget", "{}")
-	if h.s.token != nil || strings.Trim(string(held), "\x00") != "" {
+	if h.s.local.token != nil || strings.Trim(string(held), "\x00") != "" {
 		t.Errorf("held bytes after forget: %q", held)
 	}
 	// Close (on exit) does the same.
 	h.post("/api/fetch", `{"token":"`+token+`","keep":true}`)
 	h.wait()
-	held = h.s.token
+	held = h.s.local.token
 	h.s.Close()
-	if h.s.token != nil || strings.Trim(string(held), "\x00") != "" {
+	if h.s.local.token != nil || strings.Trim(string(held), "\x00") != "" {
 		t.Error("Close kept the token")
 	}
 	if code, _ := h.post("/api/fetch", `{"token":"`+token+`"}`); code != http.StatusServiceUnavailable {

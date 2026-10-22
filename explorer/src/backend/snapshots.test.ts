@@ -5,7 +5,8 @@ import { EncryptedSnapshotError, isEncrypted, loadSnapshot } from '../snapshot/l
 import type { Manifest } from '../snapshot/types'
 import { fixtureBytes, fixtureModel, previousFixtureModel } from '../test/fixture'
 import { encryptSnapshot } from './encrypt'
-import { comparisonBase, parseRecipients, snapshotFileName } from './snapshots'
+import type { HistoryEntry } from './backend'
+import { comparisonBase, historyBase, historyContract, parseRecipients, sizeText, snapshotFileName } from './snapshots'
 
 const manifest = (contract: number | undefined, createdAt: string) => ({
   manifest: { contract: contract === undefined ? undefined : { number: contract }, createdAt } as Manifest,
@@ -66,5 +67,46 @@ describe('download', () => {
     await expect(encryptSnapshot(data, { kind: 'recipients', recipients: [] })).rejects.toThrow('at least one')
     await expect(encryptSnapshot(data, { kind: 'recipients', recipients: ['ssh-ed25519 AAAA'] })).rejects.toThrow('Not an age recipient')
     await expect(encryptSnapshot(data, { kind: 'recipients', recipients: ['age1nope'] })).rejects.toThrow(/age recipient|Could not encrypt/)
+  })
+})
+
+describe('history', () => {
+  const entry = (id: string, contract: string, createdAt: string): HistoryEntry => ({
+    id,
+    contract,
+    createdAt,
+    collections: 1,
+    problems: 0,
+    partial: false,
+    size: 1,
+    stored: 1,
+  })
+
+  it('names the contract folder', () => {
+    expect(historyContract({ contract: { number: 1234 } } as Manifest)).toBe('1234')
+    expect(historyContract({} as Manifest)).toBe('unknown')
+  })
+
+  it('compares with the newest older snapshot of the same contract, not with itself', () => {
+    const m = { contract: { number: 1 }, createdAt: '2026-10-15T08:00:00Z' } as Manifest
+    const entries = [
+      entry('self', '1', '2026-10-15T08:00:00Z'),
+      entry('newer', '1', '2026-10-16T08:00:00Z'),
+      entry('other', '2', '2026-10-14T23:00:00Z'),
+      entry('older', '1', '2026-10-10T08:00:00Z'),
+      entry('newest-older', '1', '2026-10-14T08:00:00Z'),
+    ]
+    expect(historyBase(entries, m, 'self')?.id).toBe('newest-older')
+    expect(historyBase(entries.slice(0, 3), m, 'self')).toBeUndefined()
+    // Same time, another ID (fetched twice in a second): not older.
+    expect(historyBase([entry('twin', '1', '2026-10-15T08:00:00Z')], m, 'self')).toBeUndefined()
+  })
+
+  it('words sizes', () => {
+    expect(sizeText(500)).toBe('500 B')
+    expect(sizeText(1536)).toBe('1.5 KB')
+    expect(sizeText(225 * 1024)).toBe('225 KB')
+    expect(sizeText(500 * 1024 * 1024)).toBe('500 MB')
+    expect(sizeText(3 * 1024 ** 3)).toBe('3.0 GB')
   })
 })

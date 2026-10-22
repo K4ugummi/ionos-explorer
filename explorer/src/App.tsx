@@ -1,9 +1,10 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { applyAnnotations, isEmpty, loadStored, saveStored, storageKey, type Annotations } from './annotations/annotations'
 import { AnnotationsContext } from './annotations/context'
-import { comparisonBase } from './backend/snapshots'
-import { useBackend, type BackendApi } from './backend/useBackend'
+import { accountLink, type Client } from './backend/backend'
+import { comparisonBase, historyBase, historyContract } from './backend/snapshots'
+import { useBackend, type BackendApi, type FetchedInfo } from './backend/useBackend'
 import { diagramFor } from './diagram/build'
 import { CompareContext } from './diff/context'
 import { compareModels, markChanges } from './diff/diff'
@@ -13,13 +14,16 @@ import type { GraphNode, Model } from './model/types'
 import { search } from './search/search'
 import type { Manifest } from './snapshot/types'
 import { loadSnapshot } from './snapshot/load'
+import { AccountButton } from './ui/Account'
 import { Changes } from './ui/Changes'
 import { DetailPanel } from './ui/DetailPanel'
+import { ChangePasswordScreen, LoginScreen } from './ui/LoginScreen'
 import { modeParams, parseMode, type DiagramMode } from './ui/mode'
 import { OpenScreen } from './ui/OpenScreen'
 import { Overview } from './ui/Overview'
 import { PathPanel } from './ui/PathPanel'
 import { SearchPanel } from './ui/SearchPanel'
+import { EnrolScreen } from './ui/TwoFactor'
 import { DownloadDialog, RefreshDialog } from './ui/SnapshotDialogs'
 import { useHashState } from './ui/useHashState'
 
@@ -70,7 +74,8 @@ interface Open {
   fetched?: Fetched
 }
 
-interface Fetched {
+/** A snapshot from the server (fetched now, or from the history): in memory until downloaded. */
+interface Fetched extends FetchedInfo {
   data: Uint8Array
   manifest: Manifest
 }
@@ -78,11 +83,33 @@ interface Fetched {
 function App() {
   const [open, setOpen] = useState<Open | null>(null)
   // A fetched snapshot opens like a file; the one open before becomes the comparison base (same contract, older).
-  const openFetched = useCallback(async (data: Uint8Array) => {
-    const model = buildModel(await loadSnapshot(data))
-    setOpen((o) => ({ model, older: comparisonBase(o?.model, model), fetched: { data, manifest: model.manifest } }))
+  // With a history, a snapshot from the server is compared with the one before it there, unless something else is compared already.
+  const client = useRef<Client | undefined>(undefined)
+  const addHistoryBase = useCallback(async (model: Model, historyId: string) => {
+    const c = client.current
+    if (!c) return
+    const m = model.manifest
+    try {
+      const pick = historyBase((await c.history(historyContract(m))).entries, m, historyId)
+      if (!pick) return
+      const older = buildModel(await loadSnapshot(await c.historySnapshot(pick.id)))
+      setOpen((o) => (o?.model === model && !o.older ? { ...o, older } : o))
+    } catch {
+      // Comparing is a bonus; the Changes tab offers the history by hand.
+    }
   }, [])
+  const openFetched = useCallback(
+    async (data: Uint8Array, info: FetchedInfo) => {
+      const model = buildModel(await loadSnapshot(data))
+      setOpen((o) => ({ model, older: comparisonBase(o?.model, model), fetched: { data, manifest: model.manifest, ...info } }))
+      if (info.historyId) void addHistoryBase(model, info.historyId)
+    },
+    [addHistoryBase],
+  )
   const backend = useBackend(openFetched)
+  useEffect(() => {
+    client.current = backend.client
+  }, [backend.client])
   // Fetch the diagram code once the user starts opening a snapshot, while it is read.
   useEffect(() => {
     if (open) return
@@ -91,7 +118,32 @@ function App() {
     for (const e of events) window.addEventListener(e, preload, { once: true, capture: true })
     return () => events.forEach((e) => window.removeEventListener(e, preload, { capture: true }))
   }, [open])
-  if (!open) return <OpenScreen backend={backend} onLoaded={(model, demoLinks) => setOpen({ model, demoLinks })} />
+  // Hosted: a setup or password link pasted into an open tab changes only the hash; start over with it.
+  const hosted = backend.hosted
+  useEffect(() => {
+    if (!hosted) return
+    const onHash = () => accountLink(window.location.hash) && window.location.reload()
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [hosted])
+  // Hosted for a team: nothing but the login without a session (an open snapshot stays open when it ends).
+  if (backend.hosted && !open) {
+    if (accountLink(window.location.hash) || backend.backend.kind === 'no-session') return <LoginScreen client={backend.client} />
+    if (backend.backend.kind === 'checking') return <div className="open hint">Connecting…</div>
+  }
+  if (backend.backend.kind === 'ready' && backend.backend.status.mustChangePassword) return <ChangePasswordScreen api={backend} />
+  if (backend.backend.kind === 'ready' && backend.backend.status.mustEnrollTotp) return <EnrolScreen api={backend} />
+  if (!open) {
+    return (
+      <OpenScreen
+        backend={backend}
+        onLoaded={(model, demoLinks, stored) => {
+          setOpen({ model, demoLinks, fetched: stored && { data: stored.data, manifest: model.manifest, historyId: stored.historyId } })
+          if (stored) void addHistoryBase(model, stored.historyId)
+        }}
+      />
+    )
+  }
   const compare = (other?: Model) =>
     setOpen((o) => {
       if (!o) return o
@@ -243,6 +295,11 @@ function Explorer({
                 {m.generator.name} {m.generator.version}
               </span>
               {m.synthetic && <span className="pill">demo data</span>}
+              {fetched?.historyError && (
+                <span className="pill warn" title={fetched.historyError}>
+                  not in your history
+                </span>
+              )}
               {issues > 0 && (
                 <button
                   className="pill warn"
@@ -256,7 +313,7 @@ function Explorer({
             <div className="topbar-actions">
               <BackendActions api={backend} onRefresh={() => setDialog('refresh')} />
               {fetched && (
-                <button className="btn" onClick={() => setDialog('download')} title="Save the fetched snapshot as a file">
+                <button className="btn" onClick={() => setDialog('download')} title="Save this snapshot as a file">
                   Download
                 </button>
               )}
@@ -343,7 +400,13 @@ function Explorer({
                     onPath={(to) => enter({ kind: 'path', from: shown.id, to, hops: DEFAULT_HOPS })}
                   />
                 ) : view === 'changes' ? (
-                  <Changes model={snapshotModel} diff={diff} onCompare={onCompare} onSelect={select} />
+                  <Changes
+                    model={snapshotModel}
+                    diff={diff}
+                    onCompare={onCompare}
+                    onSelect={select}
+                    history={backend.backend.kind === 'ready' && backend.backend.status.history ? backend.client : undefined}
+                  />
                 ) : (
                   <Overview model={model} onSelect={select} onSearch={setQuery} />
                 )}
@@ -363,7 +426,10 @@ function BackendActions({ api, onRefresh }: { api: BackendApi; onRefresh: () => 
   return (
     <>
       {tokenHeld && (
-        <span className="pill token-pill" title="The IONOS API token is held in the memory of ionos-explorer on this computer">
+        <span
+          className="pill token-pill"
+          title={`The IONOS API token is held in the memory of ionos-explorer ${api.hosted ? 'on the server, for your session only' : 'on this computer'}`}
+        >
           token held
           <button
             className="token-forget"
@@ -379,6 +445,7 @@ function BackendActions({ api, onRefresh }: { api: BackendApi; onRefresh: () => 
       <button className="btn" onClick={onRefresh} title="Fetch the contract from IONOS again and compare">
         {f?.state === 'running' ? `Fetching ${f.done}/${f.total}…` : 'Refresh'}
       </button>
+      {api.hosted && <AccountButton api={api} />}
     </>
   )
 }

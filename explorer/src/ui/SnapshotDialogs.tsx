@@ -1,40 +1,9 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import { download, parseRecipients, snapshotFileName, type Encryption } from '../backend/snapshots'
 import type { BackendApi } from '../backend/useBackend'
 import type { Manifest } from '../snapshot/types'
+import { Dialog } from './Dialog'
 import { FetchPanel } from './FetchPanel'
-
-/** A modal <dialog>: focus stays inside, Escape and the ✕ close it, focus returns to the opener. */
-function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null)
-  const id = useId()
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    if (ref.current && !ref.current.open) ref.current.showModal()
-    // The parent may drop the dialog without closing it (a fetch landed): focus goes back as on Escape.
-    // No close() here, it would report a close.
-    return () => opener?.focus()
-  }, [])
-  return (
-    <dialog
-      ref={ref}
-      className="modal"
-      aria-labelledby={id}
-      onClose={onClose}
-      onClick={(e) => e.target === ref.current && ref.current.close()} // the backdrop
-    >
-      <div className="modal-inner">
-        <div className="modal-head">
-          <h2 id={id}>{title}</h2>
-          <button className="btn small" onClick={() => ref.current?.close()} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </dialog>
-  )
-}
 
 /** "Refresh": fetch again; closing it lets a running fetch go on (the top bar shows it). */
 export function RefreshDialog({ api, onClose }: { api: BackendApi; onClose: () => void }) {
