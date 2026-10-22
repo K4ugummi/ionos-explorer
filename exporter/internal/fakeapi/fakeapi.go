@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"ionos-explorer/exporter/internal/endpoints"
-	"ionos-explorer/exporter/internal/fixture"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/fixture"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 // Prefix is where the server answers for an API: see endpoints.API.Prefix.

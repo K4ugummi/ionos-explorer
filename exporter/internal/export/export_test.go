@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"ionos-explorer/exporter/internal/endpoints"
-	"ionos-explorer/exporter/internal/fakeapi"
-	"ionos-explorer/exporter/internal/httpx"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/fakeapi"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/httpx"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 // The demo contract, as the explorer expects it.

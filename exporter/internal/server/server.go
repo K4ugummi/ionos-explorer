@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
 )
 
 // App is what /api/status answers in "app", so the UI can tell this server

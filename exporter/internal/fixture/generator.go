@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"ionos-explorer/exporter/internal/endpoints"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 const (
@@ -60,8 +60,8 @@ func Generate(opts Options) (w *snapshot.Writer, err error) {
 type gen struct {
 	previous bool
 	rng      *rand.Rand
-	now time.Time
-	w   *snapshot.Writer
+	now      time.Time
+	w        *snapshot.Writer
 
 	users        []user
 	templates    map[string]template

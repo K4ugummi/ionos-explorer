@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 // The previous snapshot differs only by the edits in history.go: every other

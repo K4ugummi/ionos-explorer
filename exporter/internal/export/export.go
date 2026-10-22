@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"ionos-explorer/exporter/internal/endpoints"
-	"ionos-explorer/exporter/internal/httpx"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/httpx"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 // Getter is the part of httpx.Client the export needs.

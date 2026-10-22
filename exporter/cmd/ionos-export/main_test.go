@@ -11,8 +11,8 @@ import (
 
 	"filippo.io/age"
 
-	"ionos-explorer/exporter/internal/fakeapi"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/fakeapi"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 const token = "cli-test-token-abcdef"

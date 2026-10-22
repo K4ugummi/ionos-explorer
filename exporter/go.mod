@@ -1,4 +1,4 @@
-module ionos-explorer/exporter
+module github.com/K4ugummi/ionos-explorer/exporter
 
 go 1.26.0
 

@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"ionos-explorer/exporter/internal/fixture"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/fixture"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 var version = "dev"

@@ -24,8 +24,8 @@ import (
 	"syscall"
 	"time"
 
-	"ionos-explorer/exporter/internal/server"
-	"ionos-explorer/exporter/internal/webui"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/server"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/webui"
 )
 
 var version = "dev"

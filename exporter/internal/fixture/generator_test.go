@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 func load(t *testing.T) *snapshot.Snapshot {

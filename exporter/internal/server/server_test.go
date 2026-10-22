@@ -16,8 +16,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"ionos-explorer/exporter/internal/fakeapi"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/fakeapi"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 // A token that is easy to find anywhere it should not be.

@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"ionos-explorer/exporter/internal/endpoints"
-	"ionos-explorer/exporter/internal/export"
-	"ionos-explorer/exporter/internal/httpx"
-	"ionos-explorer/exporter/internal/snapshot"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/endpoints"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/export"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/httpx"
+	"github.com/K4ugummi/ionos-explorer/exporter/internal/snapshot"
 )
 
 var version = "dev"
